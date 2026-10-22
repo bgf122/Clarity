@@ -1,0 +1,58 @@
+# Clarity
+
+Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) that you drop into the client folder.
+
+## Features
+- **Floating combat text.**
+  - Large, outlined damage and heal numbers that stay the same size on screen at any distance.
+  - Crits pop and shake, and glancing hits are drawn smaller.
+  - Health drains show as heals on you.
+  - Numbers stack up neatly when several hit the same target.
+  - Per category, you choose whose numbers you see (yours, your pet's, other players').
+- **Nameplates.**
+  - Readable plates over players, NPCs and pets: level and name, an org/title line, and a health bar.
+  - Your selected target and your fight target get corner brackets.
+  - Overlapping plates are moved apart, and you can click a plate to select that character.
+- **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
+
+## Install
+**With [AoForge](https://github.com/bgf122/AoForge) (recommended):** install Clarity from the addon list. AoForge also handles updates and uninstalling.
+
+**By hand:**
+1. Download `Clarity-<version>.zip` from [Releases](../../releases).
+2. Close the game.
+3. Copy `dinput.dll` into the client folder, the one that contains `AnarchyOnline.exe`.
+4. Start the game. Clarity creates `Clarity.ini` and `Clarity.log` next to the DLL.
+
+If the folder already has a `dinput.dll` from another mod, don't overwrite it. Clarity and that mod can't both use the name.
+
+## Uninstall
+Close the game and delete `dinput.dll`. You can also delete `Clarity.ini` (your settings) and `Clarity.log`.
+
+## Compatibility
+- **Works alongside** [AOReloaded](https://github.com/wannabuh/AOReloaded) (`version.dll`) and [ao-vk](https://github.com/wannabuh/ao-vk) (`randy31.dll`).
+- **Client updates.** Clarity finds some game functions by their byte patterns. If a client update changes them, the affected features switch themselves off and say so in `Clarity.log`, and the game keeps running normally. A Clarity update fixes that.
+- It only loads into `AnarchyOnline.exe`.
+
+## Settings
+Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs: the file is reloaded automatically. The sections are:
+- `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
+- `[Colors]`: per-colour overrides;
+- `[Nameplates]`: sizes, what's shown, opacity, font.
+
+If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
+
+## Building from source
+Requirements: Visual Studio 2022 with the C++ workload. The DLL is 32-bit.
+```
+cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 -DDEPLOY_DIR=<test client folder>
+cmake --build build --config Release
+```
+- `DEPLOY_DIR` is optional. When it's set, the built `dinput.dll` is copied there.
+- `python tools/verify_sigs.py <client folder>` checks the byte signatures against a client. It needs `pip install pefile`.
+- Pushing a `v*` tag builds a release on GitHub Actions.
+
+## Licence
+MIT, see [LICENSE](LICENSE). Clarity includes MinHook; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Clarity is a fan project. It is not affiliated with or endorsed by Funcom. Anarchy Online is a trademark of Funcom.

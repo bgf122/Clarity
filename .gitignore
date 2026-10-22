@@ -1,0 +1,33 @@
+# Game client copy, launcher and its runtime files (not ours)
+/client/
+/dist/
+/logs/
+/*.exe
+/*.dll
+/*.pdb
+/*.tmp
+/launcher.version
+/LauncherSettings.json
+
+# Build output
+/build/
+/out/
+*.obj
+*.ilk
+*.exp
+*.lib
+
+# Ghidra projects / tooling state
+/ghidra/
+/.venv/
+__pycache__/
+
+# Editors / local
+.vs/
+.vscode/
+*.log
+.claude/settings.local.json
+
+# Machine-specific Claude Code config (see .mcp.json.example)
+.mcp.json
+CLAUDE.local.md

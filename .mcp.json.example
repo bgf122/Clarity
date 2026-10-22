@@ -1,0 +1,58 @@
+{
+  "mcpServers": {
+    "ghidra-gamecode": {
+      "command": "C:\\path\\to\\ghidra-mcp-venv\\Scripts\\ghidra-mcp.exe",
+      "args": [
+        "--headless",
+        "--binary",
+        "C:\\path\\to\\client\\Gamecode.dll",
+        "--project",
+        "C:\\path\\to\\ghidra-projects",
+        "--project-name",
+        "Gamecode_ghidra_mcp",
+        "--ready-timeout",
+        "600"
+      ],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "C:\\path\\to\\ghidra_PUBLIC",
+        "JAVA_HOME": "C:\\path\\to\\jdk-21"
+      }
+    },
+    "ghidra-displaysystem": {
+      "command": "C:\\path\\to\\ghidra-mcp-venv\\Scripts\\ghidra-mcp.exe",
+      "args": [
+        "--headless",
+        "--binary",
+        "C:\\path\\to\\client\\DisplaySystem.dll",
+        "--project",
+        "C:\\path\\to\\ghidra-projects",
+        "--project-name",
+        "DisplaySystem_ghidra_mcp",
+        "--ready-timeout",
+        "600"
+      ],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "C:\\path\\to\\ghidra_PUBLIC",
+        "JAVA_HOME": "C:\\path\\to\\jdk-21"
+      }
+    },
+    "ghidra-gui": {
+      "command": "C:\\path\\to\\ghidra-mcp-venv\\Scripts\\ghidra-mcp.exe",
+      "args": [
+        "--headless",
+        "--binary",
+        "C:\\path\\to\\client\\GUI.dll",
+        "--project",
+        "C:\\path\\to\\ghidra-projects",
+        "--project-name",
+        "GUI_ghidra_mcp",
+        "--ready-timeout",
+        "600"
+      ],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "C:\\path\\to\\ghidra_PUBLIC",
+        "JAVA_HOME": "C:\\path\\to\\jdk-21"
+      }
+    }
+  }
+}

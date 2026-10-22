@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (32-bit)
+        run: cmake -S . -B build -A Win32 -DDEPLOY_DIR=
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Check version
+        shell: pwsh
+        run: |
+          $info = (Get-Item build/Release/dinput.dll).VersionInfo
+          "ProductName=$($info.ProductName) ProductVersion=$($info.ProductVersion)"
+          if ($info.ProductName -ne 'Clarity') { throw 'dinput.dll has no Clarity VERSIONINFO' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and "v$($info.ProductVersion)" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match project version $($info.ProductVersion) in CMakeLists.txt"
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ver = (Get-Item build/Release/dinput.dll).VersionInfo.ProductVersion
+          New-Item -ItemType Directory dist | Out-Null
+          Compress-Archive -Path build/Release/dinput.dll, README.md, LICENSE, THIRD_PARTY_NOTICES.md -DestinationPath "dist/Clarity-$ver.zip"
+          "ZIP=dist/Clarity-$ver.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clarity
+          path: ${{ env.ZIP }}
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "Clarity ${{ github.ref_name }}" --generate-notes

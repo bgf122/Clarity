@@ -17,10 +17,12 @@
 #include "../../core/game.h"
 #include "../../core/hooks.h"
 #include "../../core/log.h"
+#include "../../core/n3.h"
 #include "../../core/signatures.h"
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -79,6 +81,8 @@ struct Text {
     bool hasId = false;
     game::Identity id{};
     float headUp = 1.5f;     // world units from the visual (locator) up to the anchor; game default
+    bool anchored = false;   // anchorWorld is set: the text stays where it appeared (FollowTarget off)
+    game::Vec3 anchorWorld{};
     char label[16] = {};     // start of the text, for debug logging
     bool placeLogged = false;
     float widthRatio = 0.0f; // text width / glyph height
@@ -89,7 +93,7 @@ struct Text {
     bool glancing = false;
     int stackSlot = 0;
     float jitterPx = 0.0f;
-    float spreadPx = 0.0f; // horizontal slot offset (alternating sides per target)
+    int spreadSlot = 0;    // horizontal start slot: 0, +1, -1, +2, -2 (alternating sides per target)
     float driftDir = 0.0f; // -1 / +1: which way the text drifts while rising
     uint32_t outlineRgb = 0;
     DWORD lastSeen = 0;
@@ -100,6 +104,7 @@ struct Pending {
     void* dynel = nullptr;
     int colorIdx = -1;
     int hitType = 0;
+    int32_t rgb = -1; // our own colour for the text (misses), -1 = the game's / [Colors]
 };
 
 // Hit types from AttackInfoIIR_t (+0x30), passed by the game as the combat function's 7th
@@ -124,10 +129,11 @@ CreateFn g_createGame = nullptr; // CreateFloatingText's own address (enters our
 CharActionFn g_origCharAction = nullptr;
 
 constexpr int kActionDrain = 0xD0;
+constexpr int kActionNanoPool = 0x8C; // "Feedback_IncreasedNanoPool": p28[1] = nano points (client 0x1005DC96)
 constexpr int kStatHealth = 0x1B;
 constexpr uint32_t kTypeCharacter = 50000; // Identity type of characters (n3Dynel_t +0x14)
 constexpr int kDynelIsClientChar = 0x140;  // n3Dynel_t: set for the client's own character
-constexpr int kColorHeal = 0x1C;           // the game's colour for heals (event 0x22/0x23)
+constexpr int kColorHeal = kColorIndexHeal; // the game's colour index for heals (event 0x22/0x23)
 ProcessFn g_origProcess = nullptr;
 SetTextFn g_origSetText = nullptr;
 
@@ -145,7 +151,27 @@ constexpr uint32_t kGroupOtherHitByNano = 0x42000004; // chat groups, see AoEmu 
 constexpr uint32_t kGroupOtherHitByOther = 0x4200000A;
 constexpr uint32_t kGroupYouHitOther = 0x42000008;
 constexpr uint32_t kGroupYouHitOtherWithNano = 0x42000005;
+constexpr uint32_t kGroupYourMisses = 0x42000012;
+constexpr uint32_t kGroupOtherMisses = 0x42000013;
+constexpr uint32_t kGroupMeGotNano = 0x42000016;
 std::unordered_map<void*, DWORD> g_engaged; // targets we've hit, and when
+
+// The combat-message function itself (same client 0x10012BD5), __thiscall with 8 stack arguments
+// (ret 0x20). Several of its cases send only the chat line and leave through the exit that skips
+// the floating text; hooked to add text for those.
+using CombatFn = void(__thiscall*)(void* self, int event, uint8_t* target, int amount, uint8_t* attacker,
+                                   int special, int damageType, int hitType, int extra);
+CombatFn g_origCombat = nullptr;
+constexpr int kEventMissed = 0x3B;  // MissedAttackInfoIIR_t: "You tried to hit X, but missed!" and the reverse
+constexpr int kEventGotNano = 0x44; // "Feedback_GotNanoIncreaseFrom": target = the giver, amount = nano points
+constexpr int kEventYouHealed = 0x41;   // "Feedback_YouHealed": target = who you healed, amount = health
+constexpr int kEventYouGaveNano = 0x43; // "Feedback_PlayerIncreasedNano": target = who got it, amount = nano
+constexpr uint32_t kGroupYouGaveHealth = 0x42000014;
+constexpr uint32_t kGroupYouGaveNano = 0x42000017;
+constexpr int kColorMiss = 0;       // the game colour index passed along; our own colour replaces it
+constexpr int kStatCurrentNano = 214;
+int32_t g_nextRgb = -1;            // colour for the next CreateFloatingText we make, see Pending::rgb
+char g_nextSign = 0;               // sign for the next one we make ('+' for our gains), see SelfSigns
 
 struct Spread {
     DWORD last = 0;
@@ -304,6 +330,10 @@ void Register(uint8_t* self, const char* text)
         for (Sprite& s : t.base)
             s.argb = 0xFF000000u | static_cast<uint32_t>(cfg.colors[idx]);
     }
+    if (g_pending.active && g_pending.rgb >= 0) {
+        for (Sprite& s : t.base)
+            s.argb = 0xFF000000u | static_cast<uint32_t>(g_pending.rgb);
+    }
 
     // The attack's hit type as the server sent it (AttackInfo +0x30): only auto attacks carry it.
     t.crit = g_pending.active && g_pending.hitType == kHitCritical;
@@ -321,8 +351,8 @@ void Register(uint8_t* self, const char* text)
     if (cfg.jitterPx > 0.0f)
         t.jitterPx = (static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f) * cfg.jitterPx;
 
-    // Horizontal separation: consecutive texts on the same target take slots 0, +1, -1, +2,
-    // -2, ... and drift outwards on their side while rising.
+    // Horizontal separation: consecutive texts on the same target start in slots 0, +1, -1, +2,
+    // -2, ... side by side (Update spaces them by their width), and drift outwards with DriftPx.
     {
         static const int kSlots[] = {0, 1, -1, 2, -2};
         auto& spread = g_spread[t.dynel];
@@ -331,7 +361,7 @@ void Register(uint8_t* self, const char* text)
             spread.next = 0;
         spread.last = now;
         const int slot = kSlots[spread.next++ % 5];
-        t.spreadPx = static_cast<float>(slot) * cfg.spreadPx;
+        t.spreadSlot = slot;
         t.driftDir = slot > 0 ? 1.0f : (slot < 0 ? -1.0f : (rand() & 1 ? 1.0f : -1.0f));
     }
 
@@ -426,14 +456,20 @@ void Update(uint8_t* self, Text& t)
     // Everything below is in camera space (x right, y up, z = depth), which is also the space
     // DiaBill sprite offsets are in.
     const game::Vec3 posView = game::ToView(pos);
-    const game::Vec3 upView = game::WorldDirToView({0.0f, 1.0f, 0.0f});
-    auto bodyPoint = [&](float h) {
-        return game::Vec3{posView.x + upView.x * h, posView.y + upView.y * h, posView.z + upView.z * h};
-    };
     int screenW, screenH;
     game::ViewportSize(&screenW, &screenH);
 
-    game::Vec3 anchorView = bodyPoint(t.headUp);
+    // The start point above the target. Unless FollowTarget is on, it is fixed where the text
+    // appeared, so the text rises from the spot of the hit while the target moves on.
+    game::Vec3 anchorWorld{pos.x, pos.y + t.headUp, pos.z};
+    if (!cfg.followTarget) {
+        if (!t.anchored) {
+            t.anchorWorld = anchorWorld;
+            t.anchored = true;
+        }
+        anchorWorld = t.anchorWorld;
+    }
+    game::Vec3 anchorView = game::ToView(anchorWorld);
     float sx = 0.0f, sy = 0.0f;
     const char* mode = "head";
     const float dist = std::sqrt(anchorView.x * anchorView.x + anchorView.y * anchorView.y + anchorView.z * anchorView.z);
@@ -498,7 +534,11 @@ void Update(uint8_t* self, Text& t)
     // Keep the whole text inside the window: e.g. a big target's head above the screen top.
     const float margin = cfg.screenMarginPx;
     float upPx = risePx;       // baseline / bottom edge, pixels above the anchor
-    float rightPx = t.jitterPx + t.spreadPx + t.driftDir * cfg.driftPx * EaseOutCubic(life); // centre, right of the anchor
+    // Start slots are at least SpreadPx apart, and at least the text's own width (unscaled by the
+    // pop-in) plus a gap, so long numbers and crits don't start on top of each other.
+    constexpr float kSpreadGapPx = 6.0f;
+    const float spreadStep = cfg.spreadPx > 0.0f ? std::max(cfg.spreadPx, 2.0f * halfWPx / pop + kSpreadGapPx) : 0.0f;
+    float rightPx = t.jitterPx + t.spreadSlot * spreadStep + t.driftDir * cfg.driftPx * EaseOutCubic(life); // centre, right of the anchor
     // Crits shake sideways briefly (~12 Hz, decaying).
     constexpr float kShakeSec = 0.35f;
     if (t.crit && cfg.critShakePx > 0.0f && age < kShakeSec)
@@ -591,22 +631,79 @@ void Update(uint8_t* self, Text& t)
     }
 }
 
+// The sign for a number on our own character, by the combat-log group it was filed under.
+char SignOf(uint32_t group)
+{
+    switch (group) {
+    case 0x42000001: // me hit by environment
+    case 0x42000002: // me hit by nano
+    case 0x42000006: // me hit by monster
+    case 0x42000007: // me hit by player
+        return '-';
+    case 0x4200000B: // me got XP
+    case 0x4200000C: // me got SK
+    case 0x42000015: // me got health
+    case kGroupMeGotNano:
+        return '+';
+    default:
+        return 0;
+    }
+}
+
+bool IsNumber(const char* text)
+{
+    if (!text || !*text)
+        return false;
+    for (const char* c = text; *c; ++c)
+        if (*c < '0' || *c > '9')
+            return false;
+    return true;
+}
+
+// The names the game shows over whoever does them: special attacks ("Fling Shot!", "Burst!",
+// "Backstab!", colour 13), perks and actions ("Thunder", "Righteous Fury", colour 3) and taunts
+// ("Aggro", "Challenger!", colour 2).
+bool IsActionName(const char* text, int colorIdx)
+{
+    return (colorIdx == 13 || colorIdx == 3 || colorIdx == 2) && !IsNumber(text);
+}
+
+// Another player's character (not ours, not an NPC).
+bool IsOtherPlayer(void* dynel)
+{
+    if (!dynel || Field<uint8_t>(static_cast<uint8_t*>(dynel), kDynelIsClientChar))
+        return false;
+    game::Identity id;
+    return game::IdentityOf(dynel, &id) && id.type == kTypeCharacter && !n3::IsNpc(id);
+}
+
 void __stdcall Hook_Create(void* dynel, const char* text, int colorIdx)
 {
     const FctConfig& cfg = Cfg().fct;
+    char sign = g_nextSign;
+    g_nextSign = 0;
+    if (cfg.enable && !cfg.othersSpecials && IsActionName(text, colorIdx) && IsOtherPlayer(dynel)) {
+        if (cfg.debug)
+            Log("[fct] hidden (other player's action): '%s'", text);
+        return;
+    }
     if (cfg.enable && g_combatCallRet && g_callerRet == g_combatCallRet) {
         const uint32_t group = *reinterpret_cast<const uint32_t*>(g_callerEbp + kCombatGroupSlot);
+        if (!sign)
+            sign = SignOf(group);
         const DWORD now = GetTickCount();
         if (group == kGroupYouHitOther || group == kGroupYouHitOtherWithNano)
             g_engaged[dynel] = now;
         const uint32_t idx = group - kCombatGroupBase;
         if (idx < static_cast<uint32_t>(kCombatGroupCount) && !cfg.showGroup[idx]) {
             // "Other hit by nano" has no attacker at all - that's also how the server reports
-            // our own procs - so it's kept on targets we've been hitting even when hidden.
+            // our own procs, which come right after our hit - so it's kept on a target we hit
+            // within ProcWindowSec even when hidden. (A long window lets every raider's nano
+            // damage on the same target through.)
             bool hide = true;
             if (group == kGroupOtherHitByNano) {
                 auto it = g_engaged.find(dynel);
-                hide = it == g_engaged.end() || now - it->second > static_cast<DWORD>(cfg.engagedSec * 1000.0f);
+                hide = it == g_engaged.end() || now - it->second > static_cast<DWORD>(cfg.procWindowSec * 1000.0f);
             }
             if (hide) {
                 if (cfg.debug)
@@ -620,31 +717,151 @@ void __stdcall Hook_Create(void* dynel, const char* text, int colorIdx)
     if (g_combatCallRet && g_callerRet == g_combatCallRet)
         hitType = *reinterpret_cast<const int*>(g_callerEbp + kCombatHitTypeSlot);
 
-    g_pending = {true, dynel, colorIdx, hitType};
+    // "-123" / "+558" on our own character, so damage taken and gains read apart at a glance.
+    char signed_[24];
+    if (cfg.enable && cfg.selfSigns && sign && dynel && IsNumber(text) && strlen(text) < sizeof(signed_) - 1 &&
+        Field<uint8_t>(static_cast<uint8_t*>(dynel), kDynelIsClientChar)) {
+        sprintf_s(signed_, "%c%s", sign, text);
+        text = signed_;
+    }
+
+    g_pending = {true, dynel, colorIdx, hitType, g_nextRgb};
+    g_nextRgb = -1;
     g_origCreate(dynel, text, colorIdx);
     g_pending.active = false;
 }
 
-// Health drains: the game prints "You drained %d points of health from the target." and sets
-// the stat directly, so no heal number is ever made. Show one on our character, coloured like
-// the game's own heals.
+// Our own character's dynel, or null.
+void* MyDynel()
+{
+    const uint32_t me = game::ClientInstance();
+    void* dynel = me ? game::DynelById({kTypeCharacter, me}) : nullptr;
+    return dynel && Field<uint8_t>(static_cast<uint8_t*>(dynel), kDynelIsClientChar) ? dynel : nullptr;
+}
+
+// A text of ours in our own colour, through the CreateFloatingText hook like the game's calls.
+void CreateOwnText(void* dynel, const char* text, int colorIdx, uint32_t rgb)
+{
+    g_nextRgb = static_cast<int32_t>(rgb & 0xFFFFFF);
+    g_createGame(dynel, text, colorIdx);
+    g_nextRgb = -1;
+}
+
+// Whether a chat group's floating text is on ([CombatLog]); logs the hidden text in debug mode.
+bool GroupShown(uint32_t group, const char* text)
+{
+    const FctConfig& cfg = Cfg().fct;
+    if (cfg.showGroup[group - kCombatGroupBase])
+        return true;
+    if (cfg.debug)
+        Log("[fct] hidden (%s): '%s'", kCombatGroups[group - kCombatGroupBase].label, text);
+    return false;
+}
+
+// Nano points gained, over our own character in the nano colour (chat group "Me got nano").
+void ShowNanoGain(int amount)
+{
+    void* me = amount > 0 ? MyDynel() : nullptr;
+    if (!me)
+        return;
+    char buf[16];
+    sprintf_s(buf, "%d", amount);
+    if (GroupShown(kGroupMeGotNano, buf)) {
+        g_nextSign = '+';
+        CreateOwnText(me, buf, kColorHeal, Cfg().fct.nanoRgb);
+    }
+}
+
+// The combat function's cases that make no floating text of their own:
+//  - misses: "Miss" over the target when your attack misses (chat group "Your misses") and
+//    "Evade" over you when an attack on you misses ("Other misses");
+//  - nano points someone gave you ("Me got nano").
+void __fastcall Hook_Combat(void* self, void* /*edx*/, int event, uint8_t* target, int amount, uint8_t* attacker,
+                            int special, int damageType, int hitType, int extra)
+{
+    g_origCombat(self, event, target, amount, attacker, special, damageType, hitType, extra);
+
+    const FctConfig& cfg = Cfg().fct;
+    if (cfg.debug) {
+        const bool targetMe = target && Field<uint8_t>(target, kDynelIsClientChar);
+        const bool attackerMe = attacker && Field<uint8_t>(attacker, kDynelIsClientChar);
+        Log("[fct] combat event 0x%X amount=%d target=%p%s attacker=%p%s special=%d dmgType=%d hit=%d",
+            event, amount, target, targetMe ? "(me)" : "", attacker, attackerMe ? "(me)" : "", special, damageType, hitType);
+    }
+    if (!cfg.enable || !amount || !target)
+        return; // (with no amount the game itself shows nothing, not even the chat line)
+    if (event == kEventGotNano) {
+        ShowNanoGain(amount);
+        return;
+    }
+    if (event == kEventYouHealed || event == kEventYouGaveNano) {
+        // Health or nano you gave someone, over them. On yourself the game already shows it.
+        if (amount < 0 || Field<uint8_t>(target, kDynelIsClientChar))
+            return;
+        char buf[16];
+        sprintf_s(buf, "%d", amount);
+        if (event == kEventYouHealed) {
+            if (GroupShown(kGroupYouGaveHealth, buf))
+                g_createGame(target, buf, kColorHeal); // the heal colour ([Colors] 28, green by default)
+        } else if (GroupShown(kGroupYouGaveNano, buf)) {
+            CreateOwnText(target, buf, kColorHeal, cfg.nanoRgb);
+        }
+        return;
+    }
+    if (event != kEventMissed)
+        return;
+    const char* text;
+    uint32_t group, rgb;
+    if (attacker && Field<uint8_t>(attacker, kDynelIsClientChar)) {
+        text = "Miss";
+        group = kGroupYourMisses;
+        rgb = cfg.missRgb;
+    } else if (Field<uint8_t>(target, kDynelIsClientChar)) {
+        text = "Evade";
+        group = kGroupOtherMisses;
+        rgb = cfg.evadeRgb;
+    } else {
+        return;
+    }
+    if (GroupShown(group, text))
+        CreateOwnText(target, text, kColorMiss, rgb);
+}
+
+// Drains: the game prints "You drained %d points of health/nano from the target." and sets the
+// stat directly, so no number is ever made. Show one on our character: health like the game's
+// own heals, nano in the nano colour.
 void __fastcall Hook_CharAction(void* self, void* /*edx*/, int action, int* p20, int chatGroup, int* p28, void* str)
 {
     g_origCharAction(self, action, p20, chatGroup, p28, str);
 
     const FctConfig& cfg = Cfg().fct;
-    if (!cfg.enable || !cfg.drainHeals || action != kActionDrain || !p20 || !p28 || p28[0] != kStatHealth)
+    if (cfg.debug)
+        Log("[fct] character action 0x%X group=0x%X p20=(%d, %d) p28=(%d, %d)", action, chatGroup, p20 ? p20[0] : 0,
+            p20 ? p20[1] : 0, p28 ? p28[0] : 0, p28 ? p28[1] : 0);
+    // "You increased your nanopool with %d points." (nano programs, items, perks): chat only.
+    if (cfg.enable && action == kActionNanoPool && p28 && p28[1] > 0) {
+        ShowNanoGain(p28[1]);
+        return;
+    }
+    if (!cfg.enable || !cfg.drainHeals || action != kActionDrain || !p20 || !p28)
+        return;
+    if (p28[0] != kStatHealth && p28[0] != kStatCurrentNano)
         return;
     const uint32_t me = game::ClientInstance();
     if (!me || static_cast<uint32_t>(p20[1]) != me || p20[0] <= 0)
         return;
-    void* meDynel = game::DynelById({kTypeCharacter, me});
-    if (!meDynel || !Field<uint8_t>(static_cast<uint8_t*>(meDynel), kDynelIsClientChar))
+    if (cfg.debug)
+        Log("[fct] drain %s %d", p28[0] == kStatHealth ? "heal" : "nano", p20[0]);
+    if (p28[0] == kStatCurrentNano) {
+        ShowNanoGain(p20[0]);
+        return;
+    }
+    void* meDynel = MyDynel();
+    if (!meDynel)
         return;
     char buf[16];
     sprintf_s(buf, "%d", p20[0]);
-    if (cfg.debug)
-        Log("[fct] drain heal %s", buf);
+    g_nextSign = '+';
     g_createGame(meDynel, buf, kColorHeal); // through our hook, like the game's own calls
 }
 
@@ -743,6 +960,8 @@ bool Install()
         g_createGame = reinterpret_cast<CreateFn>(create);
         if (uint8_t* charAction = FindUnique(SIG_CHAR_ACTION, "CharacterAction handler"))
             InstallHook("CharacterAction handler", charAction, &Hook_CharAction, &g_origCharAction);
+        if (uint8_t* combat = FindUnique(SIG_COMBAT_MESSAGE, "combat-message function"))
+            InstallHook("combat-message function", combat, &Hook_Combat, &g_origCombat);
     }
     if (ok) {
         // Optional: damage on yourself in first person goes to an off-screen 2D text in the

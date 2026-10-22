@@ -42,6 +42,12 @@ constexpr int kRSpriteMaterial = 0x204;         // RSprite ctor/dtor
 constexpr int kMaterialDeltaState = 0x70;       // RMaterial_t::SetDeltaState (randy31.c, export 0x40a65)
 constexpr size_t kSizeofRDeltaState = 0x16C;    // operator_new(0x16c) before RDeltaState("none")
 constexpr int kD3DRS_ZWRITEENABLE = 14;
+constexpr int kD3DRS_SRCBLEND = 19;
+constexpr int kD3DRS_DESTBLEND = 20;
+constexpr int kD3DRS_ALPHABLENDENABLE = 27;
+constexpr int kD3DRS_LIGHTING = 137;
+constexpr int kD3DBLEND_SRCALPHA = 5;
+constexpr int kD3DBLEND_INVSRCALPHA = 6;
 
 using DeltaStateCtorFn = void*(__thiscall*)(void* self, const char* name);
 using SetDeltaStateFn = void(__thiscall*)(void* self, void* state);
@@ -428,7 +434,7 @@ void* VisualMaterialTexture(void* vm)
     return static_cast<void**>(vm)[1];
 }
 
-bool MaterialDisableDepthTest(void* material)
+bool MaterialSetLabelStates(void* material, bool onTop)
 {
     if (!material || !g_setRenderState)
         return false;
@@ -446,8 +452,18 @@ bool MaterialDisableDepthTest(void* material)
         g_materialSetDeltaState(material, state); // AddRefs it
         g_releaseResource(state);                 // drop our construction reference
     }
-    g_setRenderState(state, kD3DRS_ZENABLE, 0);
-    g_setRenderState(state, kD3DRS_ZWRITEENABLE, 0);
+    // Unlit and alpha-blended, like the game's own name labels: ao-vk recognises labels by these states (plus a
+    // 4-vertex quad with a texture at least twice as wide as tall) and draws them after its shadow, ambient
+    // occlusion and depth-of-field passes. Without them the plate is ordinary scene geometry and those passes
+    // darken or blur it.
+    g_setRenderState(state, kD3DRS_LIGHTING, 0);
+    g_setRenderState(state, kD3DRS_ALPHABLENDENABLE, 1);
+    g_setRenderState(state, kD3DRS_SRCBLEND, kD3DBLEND_SRCALPHA);
+    g_setRenderState(state, kD3DRS_DESTBLEND, kD3DBLEND_INVSRCALPHA);
+    if (onTop) {
+        g_setRenderState(state, kD3DRS_ZENABLE, 0);
+        g_setRenderState(state, kD3DRS_ZWRITEENABLE, 0);
+    }
     return true;
 }
 

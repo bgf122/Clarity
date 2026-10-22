@@ -81,9 +81,10 @@ void DestroyVisualMaterial(void* vm);
 void* VisualMaterialMaterial(void* vm);
 void* VisualMaterialTexture(void* vm);
 
-// Turns off the depth test (and depth writes) in an RMaterial_t's render-state block (+0x70,
-// applied by RViewPort_t::SetMaterial), creating the block if the material has none.
-bool MaterialDisableDepthTest(void* material);
+// Sets the render states of a name label (unlit, alpha-blended) in an RMaterial_t's render-state block
+// (+0x70, applied by RViewPort_t::SetMaterial), creating the block if the material has none. With onTop,
+// also turns off the depth test and depth writes.
+bool MaterialSetLabelStates(void* material, bool onTop);
 
 // RSprite (randy31) material at +0x204: the RSprite ctor AddRefs it and its dtor Releases it.
 bool SwapSpriteMaterial(void* rsprite, void* material);

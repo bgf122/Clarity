@@ -6,6 +6,7 @@
 namespace prk {
 
 constexpr int kGameColorCount = 0x53; // entries in Gamecode's floating-text colour table
+constexpr int kColorIndexHeal = 28;   // the game's colour index for heals (events 0x22/0x23)
 
 // The game's combat-log categories (chat groups 0x42000001..0x42000018) the combat function
 // files each floating number under. Index = group - 0x42000001; 0x0D-0x10 aren't combat groups.
@@ -59,18 +60,24 @@ struct FctConfig {
     float critShakePx = 4.0f;    // crit sideways shake amplitude, 0 = off
     float glanceScale = 0.85f;   // glancing hits (the server's hit type 2) are drawn this much smaller
     bool drainHeals = true;      // show health drains as heals on yourself
+    uint32_t missRgb = 0xC0C0C0;  // "Miss" over the target when your attack misses ([CombatLog] ShowYourMisses)
+    uint32_t evadeRgb = 0x9FD4FF; // "Evade" over you when an attack on you misses ([CombatLog] ShowOtherMisses)
+    uint32_t nanoRgb = 0x4FA8FF;  // nano points you gain or drain ([CombatLog] ShowMeGotNano)
     float stackWindowSec = 0.6f; // texts on the same target within this window stack upwards
     float jitterPx = 6.0f;
-    float spreadPx = 36.0f;      // horizontal step between consecutive texts on one target
-    float driftPx = 20.0f;       // sideways drift over the lifetime, away from the centre
+    float spreadPx = 36.0f;      // minimum horizontal step between the start points of texts on one target
+    float driftPx = 0.0f;        // sideways drift over the lifetime, away from the centre (0 = straight up)
     bool showGroup[kCombatGroupCount]; // per combat-log category (kCombatGroups)
-    float engagedSec = 15.0f;    // unattributed nano damage is shown on targets hit by you this recently
+    float procWindowSec = 1.0f;  // unattributed nano damage is shown on a target you hit this recently (your procs)
+    bool othersSpecials = false; // special attack / perk / taunt names over other players
     bool onTop = true;           // draw over geometry (no depth test)
     float headOffset = -0.3f;    // world units relative to the target's name-tag point
     float screenMarginPx = 16.0f; // keep text this far inside the window edges
     float anchorTop = 0.3f;      // texts never start above this fraction of the screen height
     float selfScreenY = 0.6f;    // first person: own texts start here (fraction of screen height)
     bool selfFirstPerson = true; // route damage on yourself in first person to floating text
+    bool selfSigns = true;       // "-" before damage you take, "+" before what you gain (on your own character)
+    bool followTarget = false;   // texts move with their target; off = they stay where they appeared
     wchar_t fontName[64] = L"Segoe UI"; // glyph atlas font (read once, at the first text)
     int fontWeight = 800;
     bool debug = false;
@@ -80,6 +87,7 @@ struct FctConfig {
     {
         for (auto& c : colors)
             c = -1;
+        colors[kColorIndexHeal] = 0x4CDF5A; // heals in green
         for (int i = 0; i < kCombatGroupCount; ++i)
             showGroup[i] = kCombatGroups[i].show;
     }

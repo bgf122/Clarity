@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -97,6 +98,8 @@ struct Plate {
     float priority = 0.0f;   // stacking order: lower keeps its place (depth; targets first)
     float stackUp = 0.0f;    // current stacking offset, px
     DWORD stackTick = 0;
+    float headHeight = 0.0f; // smoothed anchor height above the character's position (world units)
+    DWORD headTick = 0;      // 0 = not measured yet
     Vertex origVerts[4] = {}; // the game's quad, restored when modern plates are turned off
     float origHalfW = 0.0f, origHalfH = 0.0f;
 };
@@ -138,6 +141,10 @@ bool g_swallowUp = false;
 DWORD g_gameThread = 0;
 constexpr int kTargetingScanTimer = 0x0C;
 constexpr float kStackDepthTie = 1.0f; // metres: closer than this counts as the same distance
+constexpr float kStackSwapDepth = 4.0f; // metres: the plate behind must get this much nearer to take the lower spot
+constexpr DWORD kPairForgetMs = 1500;   // an order is forgotten once its two plates stop overlapping this long
+constexpr float kHeadFollow = 2.5f;    // 1/s: how fast the plate follows the head's height (walk bob is ~2-3 Hz)
+constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height is taken at once
 raster::Font g_nameFont, g_smallFont, g_pctFont;
 bool g_fontsTried = false;
 bool g_fontsOk = false;
@@ -566,6 +573,36 @@ uint64_t Key(const game::Identity& id)
     return (static_cast<uint64_t>(id.type) << 32) | id.instance;
 }
 
+// Stacking order of two overlapping plates (keyed by their identities, lower key first). It is kept
+// while they keep overlapping, so NPCs walking around each other don't make their plates trade
+// places every time their distances cross.
+struct PairOrder {
+    bool lowFirst; // the plate with the lower Key keeps its spot; the other moves above it
+    DWORD tick;    // when the two last overlapped
+};
+std::map<std::pair<uint64_t, uint64_t>, PairOrder> g_pairOrder;
+
+// Whether q's plate keeps its spot and me's moves above it. dz = q's depth - me's depth.
+bool StackFirst(const game::Identity& q, const game::Identity& me, float dz, DWORD now)
+{
+    const uint64_t kq = Key(q), km = Key(me);
+    // Nearer goes first; about the same distance goes by identity.
+    bool qFirst = std::fabs(dz) > kStackDepthTie ? dz < 0.0f : kq < km;
+    const std::pair<uint64_t, uint64_t> pair = std::minmax(kq, km);
+    auto it = g_pairOrder.find(pair);
+    if (it != g_pairOrder.end() && now - it->second.tick < kPairForgetMs) {
+        const bool kept = (kq < km) == it->second.lowFirst;
+        if (kept != qFirst && std::fabs(dz) < kStackSwapDepth)
+            qFirst = kept; // not clearly reversed yet: keep the order
+    }
+    g_pairOrder[pair] = {(kq < km) == qFirst, now};
+    if (g_pairOrder.size() > 512) {
+        for (auto old = g_pairOrder.begin(); old != g_pairOrder.end();)
+            old = now - old->second.tick > kPairForgetMs ? g_pairOrder.erase(old) : std::next(old);
+    }
+    return qFirst;
+}
+
 // Makes TargetingModule_t rescan at its next frame, as its own pref callbacks do (timer +0xC set
 // to 100), so a character whose selected/fight-target plate went away gets its
 // ordinary tag back at once instead of after up to 2 s.
@@ -620,11 +657,43 @@ Role RoleOf(uint8_t* ind)
     return Field<uint8_t>(ind, kIndShowFrame) ? Role::Selected : Role::Normal;
 }
 
+// Ordinary tags of the types switched off (players, NPCs, pets) keep the game's own look. Their
+// type, by Indicator; checked against the identity, since an Indicator's memory can be reused
+// before our delete hook is in place.
+struct GameTag {
+    game::Identity id{};
+    Kind kind = Kind::Npc;
+    unsigned version = 0;
+    DWORD seen = 0;
+};
+std::unordered_map<uint8_t*, GameTag> g_gameTags;
+
+bool KeepsGameTag(uint8_t* ind, const game::Identity& id)
+{
+    if (RoleOf(ind) != Role::Normal)
+        return false; // your selected / fight target always gets a plate
+    auto pit = g_plates.find(ind);
+    if (pit != g_plates.end())
+        return !KindVisible(pit->second.kind);
+    const DWORD now = GetTickCount();
+    GameTag& tag = g_gameTags[ind];
+    if (tag.version != g_version.load() || tag.id.type != id.type || tag.id.instance != id.instance)
+        tag = {id, Classify(id), g_version.load(), now};
+    tag.seen = now;
+    if (g_gameTags.size() > 512) {
+        for (auto old = g_gameTags.begin(); old != g_gameTags.end();)
+            old = now - old->second.seen > 10000 ? g_gameTags.erase(old) : std::next(old);
+    }
+    return !KindVisible(tag.kind);
+}
+
 void Build(uint8_t* ind)
 {
     void* sprite = Sprite(ind);
     if (!sprite || g_buildFailed)
         return;
+    if (KeepsGameTag(ind, Field<game::Identity>(ind, kIndIdentity)))
+        return; // the update restores the game's tag if we had a plate here
     if (!EnsureFonts()) {
         g_buildFailed = true;
         return;
@@ -663,11 +732,12 @@ void Build(uint8_t* ind)
         }
         if (replacing)
             p.born -= static_cast<DWORD>(Cfg().np.fadeInSec * 1000.0f) + 1;
-        // Draw over the scene like the floating text, so objects can't cover the plate.
-        if (Cfg().np.onTop && !game::MaterialDisableDepthTest(game::VisualMaterialMaterial(p.vm))) {
+        // A name label's states, so renderers treat the plate like the game's own names (ao-vk draws those
+        // after its shadows and effects); with OnTop also over the scene, so objects can't cover it.
+        if (!game::MaterialSetLabelStates(game::VisualMaterialMaterial(p.vm), Cfg().np.onTop)) {
             static bool warned = false;
             if (!warned) {
-                Log("[np] couldn't disable the depth test on the plate material");
+                Log("[np] couldn't set the render states on the plate material");
                 warned = true;
             }
         }
@@ -767,6 +837,16 @@ int __fastcall Hook_Update(uint8_t* ind)
             Restore(ind, it);
         return keep;
     }
+    // Types switched off show the game's own tag, except while that character has a selected or
+    // fight-target plate of ours (shown instead, so the name isn't there twice).
+    const game::Identity tagId = Field<game::Identity>(ind, kIndIdentity);
+    if (KeepsGameTag(ind, tagId)) {
+        if (it != g_plates.end())
+            Restore(ind, it);
+        if (Other(ind, tagId, Role::Selected) || Other(ind, tagId, Role::Fighting))
+            game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
+        return keep;
+    }
     if (it == g_plates.end()) {
         Build(ind); // turned back on, or the builder ran before we were enabled
         it = g_plates.find(ind);
@@ -798,16 +878,10 @@ int __fastcall Hook_Update(uint8_t* ind)
             rerender = true;
         }
     }
-    // Per-type visibility applies to ordinary tags; a target you picked is always shown.
+    // An ordinary tag gives way to the same character's selected / fight-target plate.
     if (p.role == Role::Normal && (Other(ind, id, Role::Selected) || Other(ind, id, Role::Fighting))) {
         game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
         return keep; // footprint kept until it ages out, see the stacking loop
-    }
-    if (p.role == Role::Normal && !KindVisible(p.kind)) {
-        game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
-        p.hpPct = -2; // redraw when it becomes visible again
-        p.screenTick = 0;
-        return keep;
     }
 
     int pct = -1;
@@ -824,6 +898,24 @@ int __fastcall Hook_Update(uint8_t* ind)
     game::Vec3 pos;
     if (!game::IndicatorPosition(id, &pos))
         return keep;
+    // The game's anchor follows the head, so it bobs with walking, running and fighting. Keep the
+    // plate's height above the character's own position (its feet, which follow the ground without
+    // the bob) and smooth only that; big changes (mounting, zoning, a new model) snap.
+    float steady = 0.0f; // world units added to the anchor's height
+    game::Vec3 feet;
+    if (n3::Position(id, &feet)) {
+        const float height = pos.y - feet.y;
+        const DWORD now = GetTickCount();
+        if (!p.headTick || std::fabs(height - p.headHeight) > kHeadSnap) {
+            p.headHeight = height;
+        } else {
+            const float dt = std::min(0.1f, (now - p.headTick) / 1000.0f);
+            p.headHeight += (height - p.headHeight) * std::min(1.0f, dt * kHeadFollow);
+        }
+        p.headTick = now;
+        steady = p.headHeight - height;
+        pos.y += steady;
+    }
     const game::Vec3 view = game::ToView(pos);
     if (view.z < 0.1f)
         return keep;
@@ -840,8 +932,10 @@ int __fastcall Hook_Update(uint8_t* ind)
     float alpha = 1.0f;
     if (cfg.fadeInSec > 0.0f)
         alpha = std::min(1.0f, (GetTickCount() - p.born) / (cfg.fadeInSec * 1000.0f));
+    // Only ordinary tags fade with distance: your selected and fight targets stay readable as long
+    // as the game keeps their indicator, e.g. a nano target beyond the 30 m tag range.
     game::Vec3 me;
-    if (cfg.fadeStart < kTagRange && n3::Position({kTypeCharacter, game::ClientInstance()}, &me)) {
+    if (p.role == Role::Normal && cfg.fadeStart < kTagRange && n3::Position({kTypeCharacter, game::ClientInstance()}, &me)) {
         const float dx = pos.x - me.x, dz = pos.z - me.z;
         const float d = std::sqrt(dx * dx + dz * dz);
         alpha *= std::clamp((kTagRange - d) / (kTagRange - cfg.fadeStart), 0.0f, 1.0f);
@@ -871,15 +965,12 @@ int __fastcall Hook_Update(uint8_t* ind)
             auto collide = [&](const RECT& r, float qPriority, const game::Identity& qid) {
                 if (qid.type == p.id.type && qid.instance == p.id.instance)
                     return; // never against another plate of the same character
-                // Farther plates make room for nearer ones. Within kStackDepthTie of each other
-                // the order comes from the characters' identities, so it doesn't flip with small
-                // camera moves or when a plate is replaced by its selection indicator.
-                const float dz = qPriority - priority;
-                const bool qFirst = std::fabs(dz) > kStackDepthTie ? dz < 0.0f : Key(qid) < Key(p.id);
-                if (!qFirst)
-                    return;
                 const float bottom = sy - visBelow - targetUp, top = bottom - h;
                 if (sx + w2 <= r.left || sx - w2 >= r.right || top >= r.bottom || bottom <= r.top)
+                    return;
+                // Farther plates make room for nearer ones, and an order once set is kept while the
+                // two overlap (StackFirst), so it doesn't flip with small camera or NPC moves.
+                if (!StackFirst(qid, p.id, qPriority - priority, now))
                     return;
                 targetUp = sy - visBelow - (static_cast<float>(r.top) - gap);
                 moved = true;
@@ -908,7 +999,7 @@ int __fastcall Hook_Update(uint8_t* ind)
     Vertex* v = reinterpret_cast<Vertex*>(base + kSpriteVerts);
     for (int i = 0; i < 4; ++i) {
         v[i].x = p.signX[i] * halfW;
-        v[i].y = p.signY[i] * halfH + p.upSign * (lift + stackWorld);
+        v[i].y = p.signY[i] * halfH + p.upSign * (lift + stackWorld + steady);
         v[i].diffuse = diffuse;
     }
     *reinterpret_cast<float*>(base + kSpriteHalfW) = halfW;

@@ -49,6 +49,12 @@ const char kDefaultIni[] =
     "GlanceScale=0.85\n"
     "; 1 = show health drains as heals on yourself\n"
     "DrainHeals=1\n"
+    "; Colours of \"Miss\" (your attack missed) and \"Evade\" (an attack on you missed); turn them\n"
+    "; off with ShowYourMisses / ShowOtherMisses in [CombatLog]\n"
+    "MissColor=C0C0C0\n"
+    "EvadeColor=9FD4FF\n"
+    "; Colour of nano points you gain or drain (ShowMeGotNano in [CombatLog])\n"
+    "NanoColor=4FA8FF\n"
     "; Crit effects: pop-in start scale, white flash duration (s), sideways shake (px); 0 = off\n"
     "CritPop=2\n"
     "CritFlashSec=0.2\n"
@@ -57,13 +63,17 @@ const char kDefaultIni[] =
     "StackWindowSec=0.6\n"
     "; Random sideways offset in pixels\n"
     "JitterPx=6\n"
-    "; Consecutive texts on one target alternate sides this many pixels apart, and drift\n"
-    "; outwards by DriftPx while rising\n"
+    "; Consecutive texts on one target start side by side, alternating sides: at least this many\n"
+    "; pixels apart, or their own width if wider. 0 = all start at the same spot\n"
     "SpreadPx=36\n"
-    "DriftPx=20\n"
-    "; With 'Other hit by nano' off, it still shows on targets you have hit within this many\n"
-    "; seconds - the server reports your procs that way ([CombatLog] below)\n"
-    "EngagedSec=15\n"
+    "; Sideways drift outwards while rising, in pixels. 0 = straight up\n"
+    "DriftPx=0\n"
+    "; With 'Other hit by nano' off, it still shows on a target you hit within this many seconds:\n"
+    "; the server reports your procs that way ([CombatLog] below). Keep it short, or other\n"
+    "; players' nano damage on the same target shows too (raids). 0 = never\n"
+    "ProcWindowSec=1\n"
+    "; 1 = show other players' special attack, perk and taunt names over them\n"
+    "OthersSpecials=0\n"
     "; 1 = draw over everything, so large targets can't hide their own numbers\n"
     "OnTop=1\n"
     "; Start this many world units from the target's name-tag point (negative = lower)\n"
@@ -76,13 +86,18 @@ const char kDefaultIni[] =
     "SelfScreenY=0.6\n"
     "; 1 = show damage you take in first person (the game sends it to an off-screen text)\n"
     "SelfFirstPerson=1\n"
+    "; 1 = numbers on yourself get a sign: -damage taken, +health, nano, XP and SK gained\n"
+    "SelfSigns=1\n"
+    "; 1 = texts move with their target; 0 = they rise from where they appeared\n"
+    "FollowTarget=0\n"
     "; 1 = log every floating text with its colour index to Clarity.log\n"
     "Debug=0\n"
     "\n"
     "[Colors]\n"
     "; Override the game's floating-text colours by colour index: <index>=RRGGBB\n"
     "; (decimal index, see Debug=1 output). Known: 22 = your nano damage, 23/24 = damage you take,\n"
-    "; 25 = your hits, 26/27 = others' damage, 28 = heals.\n"
+    "; 25 = your hits, 26/27 = others' damage, 28 = heals (green unless set here).\n"
+    "; game = the game's own colour, e.g. 28=game\n"
     ";25=FFE680\n"
     "\n"
     "[CombatLog]\n"
@@ -159,6 +174,8 @@ int32_t ReadRgb(const wchar_t* path, const wchar_t* section, const wchar_t* key,
     GetPrivateProfileStringW(section, key, L"", buf, 64, path);
     if (!buf[0])
         return def;
+    if (_wcsicmp(buf, L"game") == 0 || buf[0] == L'-')
+        return -1; // the game's own colour
     const wchar_t* p = buf;
     if (*p == L'#')
         ++p;
@@ -220,6 +237,9 @@ void LoadConfig()
     c.outlinePx = ReadFloat(p, s, L"OutlinePx", d.outlinePx);
     c.outlineRgb = static_cast<uint32_t>(ReadRgb(p, s, L"OutlineColor", d.outlineRgb));
     c.outlineAlpha = ReadFloat(p, s, L"OutlineAlpha", d.outlineAlpha);
+    c.missRgb = static_cast<uint32_t>(ReadRgb(p, s, L"MissColor", d.missRgb));
+    c.evadeRgb = static_cast<uint32_t>(ReadRgb(p, s, L"EvadeColor", d.evadeRgb));
+    c.nanoRgb = static_cast<uint32_t>(ReadRgb(p, s, L"NanoColor", d.nanoRgb));
     c.shadowPx = ReadFloat(p, s, L"ShadowPx", d.shadowPx);
     c.critScale = ReadFloat(p, s, L"CritScale", d.critScale);
     c.glanceScale = ReadFloat(p, s, L"GlanceScale", d.glanceScale);
@@ -241,13 +261,16 @@ void LoadConfig()
         swprintf_s(key, L"Show%s", kCombatGroups[i].key);
         c.showGroup[i] = ReadFloat(p, L"CombatLog", key, (d.showGroup[i] || (otherGroup && showOthers)) ? 1.0f : 0.0f) != 0.0f;
     }
-    c.engagedSec = ReadFloat(p, s, L"EngagedSec", d.engagedSec);
+    c.procWindowSec = ReadFloat(p, s, L"ProcWindowSec", d.procWindowSec);
+    c.othersSpecials = ReadFloat(p, s, L"OthersSpecials", d.othersSpecials) != 0.0f;
     c.onTop = ReadFloat(p, s, L"OnTop", d.onTop) != 0.0f;
     c.headOffset = ReadFloat(p, s, L"HeadOffset", d.headOffset);
     c.screenMarginPx = ReadFloat(p, s, L"ScreenMarginPx", d.screenMarginPx);
     c.anchorTop = ReadFloat(p, s, L"AnchorTop", d.anchorTop);
     c.selfScreenY = ReadFloat(p, s, L"SelfScreenY", d.selfScreenY);
     c.selfFirstPerson = ReadFloat(p, s, L"SelfFirstPerson", d.selfFirstPerson) != 0.0f;
+    c.selfSigns = ReadFloat(p, s, L"SelfSigns", d.selfSigns) != 0.0f;
+    c.followTarget = ReadFloat(p, s, L"FollowTarget", d.followTarget) != 0.0f;
     GetPrivateProfileStringW(s, L"Font", d.fontName, c.fontName, 64, p);
     c.fontWeight = static_cast<int>(ReadFloat(p, s, L"FontWeight", static_cast<float>(d.fontWeight)));
     c.debug = ReadFloat(p, s, L"Debug", d.debug) != 0.0f;
@@ -263,7 +286,7 @@ void LoadConfig()
     for (int i = 0; i < kGameColorCount; ++i) {
         wchar_t key[8];
         swprintf(key, 8, L"%d", i);
-        c.colors[i] = ReadRgb(p, L"Colors", key, -1);
+        c.colors[i] = ReadRgb(p, L"Colors", key, d.colors[i]);
     }
 
     NameplateConfig& n = g_bufs[next].np;

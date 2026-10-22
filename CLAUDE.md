@@ -56,6 +56,10 @@ AO keeps prefs, `DXDiagOutput.txt` and the GUI in `%LOCALAPPDATA%\Funcom\Anarchy
 
 ## Features
 - `src/features/fct`: floating combat text. It uses exact crits and glancing hits (AttackInfo hit type at [ebp+0x20] in the combat function), drain heals (CharacterAction 0xD0), and hides others' damage by chat group (read from the caller frame).
+  - The combat-message function (SIG_COMBAT_MESSAGE, `__thiscall(event, target, amount, attacker, special, dmgType, hitType, x)`, ret 0x20) makes floating text only for a non-zero amount; several cases leave through the exit that zeroes it, so Clarity adds text after the original: 0x3B miss, 0x41 you healed, 0x43 you gave nano, 0x44 got nano from someone. Events 0x42-0x44 are sent from the CharacterAction handler.
+  - CharacterAction 0x8C = "You increased your nanopool with %d points" (amount in p28[1]).
+  - Names shown over the performer: special attacks colour 13, perks/actions 3, taunts 2 (hidden over other players unless OthersSpecials).
+  - With `Debug=1`, every combat event and CharacterAction is logged.
 - `src/features/nameplates`: the game's nametag Indicators get our own VisualMaterial_t texture: level + name, an org/title line, and a health bar. Sizing is per frame from the RSprite vertices. Per-type visibility uses VisualSprite_t::SetInvisible after the game's update. The Indicator vtable slot 0 is hooked to free our texture. The selected target's and fight target's indicators (+0x31 / +0x30) get the same plate with corner brackets (white / red-orange; gold and a single plate when it's the same character). Turning nameplates off restores the game's material and quad on every Indicator.
 - `src/features/settings`: the Clarity tab in the options window. It registers DValues `CLR_*` with ranges, reads changes with a DistributedValue_c observer, and serves Root.xml by chaining on msvcr100's CreateFileA/W import slots after AOReloaded.
 

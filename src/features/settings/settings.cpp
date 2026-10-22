@@ -94,9 +94,12 @@ const Item kItems[] = {
     {"CLR_LogMeGotXP", L"ShowMeGotXP", "Me got XP", G, nullptr, 0x0A},
     {"CLR_LogMeGotSK", L"ShowMeGotSK", "Me got SK", G, nullptr, 0x0B},
     {"CLR_LogMeCastNano", L"ShowMeCastNano", "Me cast nano", G, nullptr, 0x17},
-    {"CLR_FctEngagedSec", L"EngagedSec", "Keep 'Other hit by nano' (your procs) on targets you hit within:", F(engagedSec, 0, 60, "%.0f s", 1), "Other"},
+    {"CLR_FctProcWindowSec", L"ProcWindowSec", "Keep 'Other hit by nano' (your procs) on a target you hit within:", F(procWindowSec, 0, 5, "%.1f s", 1), "Other"},
+    {"CLR_FctOthersSpecials", L"OthersSpecials", "Show other players' special attacks and perks", B(othersSpecials), nullptr},
     {"CLR_FctSelfFirstPerson", L"SelfFirstPerson", "Show damage you take in first person", B(selfFirstPerson), nullptr},
     {"CLR_FctDrainHeals", L"DrainHeals", "Show health drains as heals on you", B(drainHeals), nullptr},
+    {"CLR_FctSelfSigns", L"SelfSigns", "Show - before damage you take and + before gains", B(selfSigns), nullptr},
+    {"CLR_FctFollowTarget", L"FollowTarget", "Numbers follow their target as it moves", B(followTarget), nullptr},
 
     {"CLR_NpEnable", L"Enable", "Modern nameplates (off = the game's original)", NB(enable), "Nameplates"},
     {"CLR_NpNaturalSize", L"NaturalSize", "Size in the world (name capitals):", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},

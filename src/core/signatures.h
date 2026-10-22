@@ -25,6 +25,12 @@
 // in first person also gets floating text.
 #define SIG_SELF_DAMAGE_ROUTE "Gamecode.dll", "80 BF 40 01 00 00 00 74 21 80 3D ?? ?? ?? ?? 00 75 18 A1 ?? ?? ?? ?? FF 75 F0"
 
+// Gamecode.dll: the combat-message function, void __thiscall (int event, n3Dynel_t* target, void* info,
+// n3Dynel_t* attacker, int special, int damageType, int hitType, int) (ret 0x20). Sends the combat
+// chat line and, for a non-zero amount, the floating text. Event 0x3B = missed attack.
+// Client VA 0x10012BD5.
+#define SIG_COMBAT_MESSAGE "Gamecode.dll", "B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 81 EC 4C 0A 00 00 53 56 89 4D D4 57 8D 4D B8 FF 15 ?? ?? ?? ?? 33 F6 68 ?? ?? ?? ?? 8D 4D DC 89 75 FC FF 15 ?? ?? ?? ?? 8B 5D 10"
+
 // Gamecode.dll: void __thiscall CharacterAction handler(int action, int* p20, int chatGroup, int* p28,
 // std::string*) (ret 0x14), called by CharacterActionIIR_t::Apply. Action 0xD0 = drain: prints
 // "You drained %d points of health/nano from the target." when p20[1] is the client's instance,

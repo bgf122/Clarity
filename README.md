@@ -6,13 +6,17 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
 - **Floating combat text.**
   - Large, outlined damage and heal numbers that stay the same size on screen at any distance.
   - Crits pop and shake, and glancing hits are drawn smaller.
-  - Health drains show as heals on you.
-  - Numbers stack up neatly when several hit the same target.
-  - Per category, you choose whose numbers you see (yours, your pet's, other players').
+  - Heals in green, nano in blue; "Miss" when your attack misses and "Evade" when an attack on you misses.
+  - Things the game only puts in chat get numbers too: nano you gain, heals and nano you give, health and nano drains.
+  - Numbers on you are signed: -damage taken, +heals and gains.
+  - Several hits on one target start side by side and rise straight up from where they happened.
+  - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and in raids only your own procs show.
 - **Nameplates.**
   - Readable plates over players, NPCs and pets: level and name, an org/title line, and a health bar.
-  - Your selected target and your fight target get corner brackets.
-  - Overlapping plates are moved apart, and you can click a plate to select that character.
+  - Your selected target and your fight target get corner brackets, and stay visible beyond the 30 m tag range.
+  - Overlapping plates are moved apart and keep their order, they don't bob with walking, and you can click a plate to select that character.
+  - Switch players, NPCs or pets off to get the game's own tags for them.
+  - Works with ao-vk: plates are drawn after its shadows and effects.
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
 ## Install

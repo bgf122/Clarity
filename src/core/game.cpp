@@ -66,6 +66,12 @@ SetRenderStateFn g_setRenderState = nullptr;
 GetDynelFn g_getDynel = nullptr;
 N3InterfaceInstanceFn g_n3Interface = nullptr;
 GetIndicatorPositionFn g_getIndicatorPosition = nullptr;
+// n3Playfield_t::GetPlayfield() (static: the current one) and LineOfSight(from, to, zone, bool).
+// Gamecode calls it with zone -1 or the source's zone instance, and false.
+using GetPlayfieldFn = void*(__cdecl*)();
+using LineOfSightFn = bool(__thiscall*)(const void* self, const Vec3* from, const Vec3* to, int zone, bool flag);
+GetPlayfieldFn g_getPlayfield = nullptr;
+LineOfSightFn g_lineOfSight = nullptr;
 using GetClientInstFn = uint32_t(__thiscall*)(void* self);
 GetClientInstFn g_getClientInst = nullptr;
 TextureCtorFn g_textureCtor = nullptr;
@@ -130,6 +136,8 @@ bool Init()
     g_n3Interface = reinterpret_cast<N3InterfaceInstanceFn>(Export("Interfaces.dll", "?GetInstance@N3InterfaceModule_t@@SAPAV1@XZ"));
     g_getIndicatorPosition = reinterpret_cast<GetIndicatorPositionFn>(
         Export("Interfaces.dll", "?N3Msg_GetIndicatorPosition@N3InterfaceModule_t@@QBEABVVector3_t@@ABVIdentity_t@@@Z"));
+    g_getPlayfield = reinterpret_cast<GetPlayfieldFn>(Export("N3.dll", "?GetPlayfield@n3Playfield_t@@SAPAV1@XZ"));
+    g_lineOfSight = reinterpret_cast<LineOfSightFn>(Export("N3.dll", "?LineOfSight@n3Playfield_t@@QBE_NABVVector3_t@@0H_N@Z"));
     g_textureCtor = reinterpret_cast<TextureCtorFn>(Export("randy31.dll", "??0RTexture_t@@QAE@PBDGGW4TextureFormat_e@0@_NPAX@Z"));
     g_lockTexture = reinterpret_cast<LockTextureFn>(Export("randy31.dll", "?LockRTexture@RTexture_t@@QAE_NAAPAXW4TextureLockType_e@1@E@Z"));
     g_unlockTexture = reinterpret_cast<UnlockTextureFn>(Export("randy31.dll", "?UnlockRTexture@RTexture_t@@QAE_NXZ"));
@@ -177,6 +185,30 @@ Vec3 ToView(const Vec3& p)
     for (int c = 0; c < 3; ++c)
         r[c] = p.x * At(v, vr, 0, c) + p.y * At(v, vr, 1, c) + p.z * At(v, vr, 2, c) + At(v, vr, 3, c);
     return {r[0], r[1], r[2]};
+}
+
+// The view matrix maps world to camera space (row vectors: v * R + t), so the camera sits at
+// c with c * R + t = 0, i.e. c = -t * R^T.
+Vec3 CameraWorldPos()
+{
+    const float* v = g_view;
+    const bool vr = IsRowVector(v);
+    float c[3];
+    for (int j = 0; j < 3; ++j)
+        c[j] = -(At(v, vr, 3, 0) * At(v, vr, j, 0) + At(v, vr, 3, 1) * At(v, vr, j, 1) + At(v, vr, 3, 2) * At(v, vr, j, 2));
+    return {c[0], c[1], c[2]};
+}
+
+bool LineOfSight(const Vec3& from, const Vec3& to, bool* known)
+{
+    *known = false;
+    if (!g_getPlayfield || !g_lineOfSight)
+        return false;
+    const void* playfield = g_getPlayfield();
+    if (!playfield)
+        return false;
+    *known = true;
+    return g_lineOfSight(playfield, &from, &to, -1, false);
 }
 
 Vec3 WorldDirToView(const Vec3& d)

@@ -61,8 +61,10 @@ AO keeps prefs, `DXDiagOutput.txt` and the GUI in `%LOCALAPPDATA%\Funcom\Anarchy
   - Names shown over the performer: special attacks colour 13, perks/actions 3, taunts 2 (hidden over other players unless OthersSpecials).
   - With `Debug=1`, every combat event and CharacterAction is logged.
 - `src/features/nameplates`: the game's nametag Indicators get our own VisualMaterial_t texture: level + name, an org/title line, and a health bar. Sizing is per frame from the RSprite vertices. Per-type visibility uses VisualSprite_t::SetInvisible after the game's update. The Indicator vtable slot 0 is hooked to free our texture. The selected target's and fight target's indicators (+0x31 / +0x30) get the same plate with corner brackets (white / red-orange; gold and a single plate when it's the same character). Turning nameplates off restores the game's material and quad on every Indicator.
+  - Plates are drawn without depth test and hidden behind walls/terrain by `N3!n3Playfield_t::LineOfSight(from, to, zone -1, false)` from the camera (CameraWorldPos from the view matrix), tested every 100 ms per plate.
+  - Characters attacking us (core/threat: damage on us with a known attacker, misses on us, the game's "Attacking You!") get blinking red brackets outside the target brackets. All plates reserve room for both bracket sets.
+  - Texture 1024x256 (long names at full size; ao-vk's label test needs width >= 2x height).
 - `src/features/settings`: the Clarity tab in the options window. It registers DValues `CLR_*` with ranges, reads changes with a DistributedValue_c observer, and serves Root.xml by chaining on msvcr100's CreateFileA/W import slots after AOReloaded.
 
 ## Backlog
-- **Area nanos.** If "Other hit by nano" hides area damage on fresh targets, also count mobs that hit you as engaged. This needs the attacker from the combat function's entry, because [ebp+0x14] is overwritten before the floating-text call.
 - **Nameplates: team visibility toggle.** Not done yet: N3Msg_GetTeamMemberList / N3Msg_IsInTeam semantics are unverified.

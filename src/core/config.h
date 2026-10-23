@@ -21,7 +21,9 @@ inline constexpr CombatGroupInfo kCombatGroups[kCombatGroupCount] = {
     {L"MeHitByEnvironment", "Me hit by environment", true},
     {L"MeHitByNano", "Me hit by nano", true},
     {L"YourPetHitByNano", "Your pet hit by nano", true},
-    {L"OtherHitByNano", "Other hit by nano", false},
+    // Nano damage the server sends without an attacker: unknown source, always hidden (no key, so
+    // it is neither read from Clarity.ini nor offered in the options tab).
+    {L"", "Other hit by nano (unknown source)", false},
     {L"YouHitOtherWithNano", "You hit other with nano", true},
     {L"MeHitByMonster", "Me hit by monster", true},
     {L"MeHitByPlayer", "Me hit by player", true},
@@ -68,7 +70,6 @@ struct FctConfig {
     float spreadPx = 36.0f;      // minimum horizontal step between the start points of texts on one target
     float driftPx = 0.0f;        // sideways drift over the lifetime, away from the centre (0 = straight up)
     bool showGroup[kCombatGroupCount]; // per combat-log category (kCombatGroups)
-    float procWindowSec = 1.0f;  // unattributed nano damage is shown on a target you hit this recently (your procs)
     bool othersSpecials = false; // special attack / perk / taunt names over other players
     bool onTop = true;           // draw over geometry (no depth test)
     float headOffset = -0.3f;    // world units relative to the target's name-tag point

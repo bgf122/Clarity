@@ -52,6 +52,13 @@ bool IdentityOf(void* dynel, Identity* out);
 // (top of the character). False if the dynel no longer exists or has no mesh.
 bool IndicatorPosition(const Identity& id, Vec3* out);
 
+// World position of the camera, from the view matrix.
+Vec3 CameraWorldPos();
+
+// n3Playfield_t::LineOfSight on the current playfield: whether nothing static (terrain, rooms,
+// buildings) blocks the line. Characters don't count. False with *known = false when unavailable.
+bool LineOfSight(const Vec3& from, const Vec3& to, bool* known);
+
 // DisplaySystem: GfxVisualDiaBill::Init(const DiaBill_n::Sprite_t*, int)
 void DiaBillInit(void* visual, const void* sprites, int count);
 

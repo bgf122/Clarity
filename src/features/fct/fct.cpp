@@ -19,6 +19,7 @@
 #include "../../core/log.h"
 #include "../../core/n3.h"
 #include "../../core/signatures.h"
+#include "../../core/threat.h"
 
 #include <windows.h>
 
@@ -147,14 +148,9 @@ uint32_t g_callerEbp = 0;
 uint32_t g_callerRet = 0;
 uint32_t g_combatCallRet = 0; // return address of its CreateFloatingText call
 constexpr int kCombatGroupSlot = 0x10;
-constexpr uint32_t kGroupOtherHitByNano = 0x42000004; // chat groups, see AoEmu ChatGroups.cs
-constexpr uint32_t kGroupOtherHitByOther = 0x4200000A;
-constexpr uint32_t kGroupYouHitOther = 0x42000008;
-constexpr uint32_t kGroupYouHitOtherWithNano = 0x42000005;
-constexpr uint32_t kGroupYourMisses = 0x42000012;
+constexpr uint32_t kGroupYourMisses = 0x42000012; // chat groups (combat-log categories)
 constexpr uint32_t kGroupOtherMisses = 0x42000013;
 constexpr uint32_t kGroupMeGotNano = 0x42000016;
-std::unordered_map<void*, DWORD> g_engaged; // targets we've hit, and when
 
 // The combat-message function itself (same client 0x10012BD5), __thiscall with 8 stack arguments
 // (ret 0x20). Several of its cases send only the chat line and leave through the exit that skips
@@ -171,6 +167,8 @@ constexpr uint32_t kGroupYouGaveNano = 0x42000017;
 constexpr int kColorMiss = 0;       // the game colour index passed along; our own colour replaces it
 constexpr int kStatCurrentNano = 214;
 int32_t g_nextRgb = -1;            // colour for the next CreateFloatingText we make, see Pending::rgb
+uint8_t* g_combatAttacker = nullptr; // while the combat function runs: its attacker argument
+                                     // ([ebp+0x14] is overwritten before its floating-text call)
 char g_nextSign = 0;               // sign for the next one we make ('+' for our gains), see SelfSigns
 
 struct Spread {
@@ -243,12 +241,6 @@ void CollectGarbage()
         } else {
             ++i;
         }
-    }
-    for (auto it = g_engaged.begin(); it != g_engaged.end();) {
-        if (now - it->second > 120000)
-            it = g_engaged.erase(it);
-        else
-            ++it;
     }
     for (auto it = g_spread.begin(); it != g_spread.end();) {
         if (now - it->second.last > 10000)
@@ -687,29 +679,30 @@ void __stdcall Hook_Create(void* dynel, const char* text, int colorIdx)
             Log("[fct] hidden (other player's action): '%s'", text);
         return;
     }
+    // Attacks on us, for the nameplates' marker: the game's "Attacking You!" over a character,
+    // and damage on us with a known attacker (below).
+    if (dynel && strcmp(text, "Attacking You!") == 0) {
+        game::Identity id;
+        if (game::IdentityOf(dynel, &id))
+            threat::NoteAttack(id);
+    }
+    if (g_combatCallRet && g_callerRet == g_combatCallRet) {
+        const uint32_t group = *reinterpret_cast<const uint32_t*>(g_callerEbp + kCombatGroupSlot);
+        if (SignOf(group) == '-' && g_combatAttacker && !Field<uint8_t>(g_combatAttacker, kDynelIsClientChar)) {
+            game::Identity id; // "me hit by monster / player / nano" (environment has no attacker)
+            if (game::IdentityOf(g_combatAttacker, &id))
+                threat::NoteAttack(id);
+        }
+    }
     if (cfg.enable && g_combatCallRet && g_callerRet == g_combatCallRet) {
         const uint32_t group = *reinterpret_cast<const uint32_t*>(g_callerEbp + kCombatGroupSlot);
         if (!sign)
             sign = SignOf(group);
-        const DWORD now = GetTickCount();
-        if (group == kGroupYouHitOther || group == kGroupYouHitOtherWithNano)
-            g_engaged[dynel] = now;
         const uint32_t idx = group - kCombatGroupBase;
         if (idx < static_cast<uint32_t>(kCombatGroupCount) && !cfg.showGroup[idx]) {
-            // "Other hit by nano" has no attacker at all - that's also how the server reports
-            // our own procs, which come right after our hit - so it's kept on a target we hit
-            // within ProcWindowSec even when hidden. (A long window lets every raider's nano
-            // damage on the same target through.)
-            bool hide = true;
-            if (group == kGroupOtherHitByNano) {
-                auto it = g_engaged.find(dynel);
-                hide = it == g_engaged.end() || now - it->second > static_cast<DWORD>(cfg.procWindowSec * 1000.0f);
-            }
-            if (hide) {
-                if (cfg.debug)
-                    Log("[fct] hidden (%s): '%s'", kCombatGroups[idx].label, text);
-                return;
-            }
+            if (cfg.debug)
+                Log("[fct] hidden (%s): '%s'", kCombatGroups[idx].label, text);
+            return;
         }
     }
 
@@ -779,7 +772,17 @@ void ShowNanoGain(int amount)
 void __fastcall Hook_Combat(void* self, void* /*edx*/, int event, uint8_t* target, int amount, uint8_t* attacker,
                             int special, int damageType, int hitType, int extra)
 {
+    g_combatAttacker = attacker;
     g_origCombat(self, event, target, amount, attacker, special, damageType, hitType, extra);
+    g_combatAttacker = nullptr;
+
+    // A miss on us is an attack too (the nameplates' marker).
+    if (event == kEventMissed && amount && target && attacker && Field<uint8_t>(target, kDynelIsClientChar) &&
+        !Field<uint8_t>(attacker, kDynelIsClientChar)) {
+        game::Identity id;
+        if (game::IdentityOf(attacker, &id))
+            threat::NoteAttack(id);
+    }
 
     const FctConfig& cfg = Cfg().fct;
     if (cfg.debug) {

@@ -68,10 +68,6 @@ const char kDefaultIni[] =
     "SpreadPx=36\n"
     "; Sideways drift outwards while rising, in pixels. 0 = straight up\n"
     "DriftPx=0\n"
-    "; With 'Other hit by nano' off, it still shows on a target you hit within this many seconds:\n"
-    "; the server reports your procs that way ([CombatLog] below). Keep it short, or other\n"
-    "; players' nano damage on the same target shows too (raids). 0 = never\n"
-    "ProcWindowSec=1\n"
     "; 1 = show other players' special attack, perk and taunt names over them\n"
     "OthersSpecials=0\n"
     "; 1 = draw over everything, so large targets can't hide their own numbers\n"
@@ -105,7 +101,6 @@ const char kDefaultIni[] =
     "ShowMeHitByEnvironment=1\n"
     "ShowMeHitByNano=1\n"
     "ShowYourPetHitByNano=1\n"
-    "ShowOtherHitByNano=0\n"
     "ShowYouHitOtherWithNano=1\n"
     "ShowMeHitByMonster=1\n"
     "ShowMeHitByPlayer=1\n"
@@ -252,14 +247,15 @@ void LoadConfig()
     // Per combat-log category. The old ShowOthers=1 switched on both "other" categories.
     const bool showOthers = ReadFloat(p, s, L"ShowOthers", 0.0f) != 0.0f;
     for (int i = 0; i < kCombatGroupCount; ++i) {
-        if (!kCombatGroups[i].key[0])
+        if (!kCombatGroups[i].key[0]) {
+            c.showGroup[i] = d.showGroup[i]; // not configurable (e.g. unknown-source nano damage: off)
             continue;
-        const bool otherGroup = i == 0x03 || i == 0x09;
+        }
+        const bool otherGroup = i == 0x09;
         wchar_t key[48];
         swprintf_s(key, L"Show%s", kCombatGroups[i].key);
         c.showGroup[i] = ReadFloat(p, L"CombatLog", key, (d.showGroup[i] || (otherGroup && showOthers)) ? 1.0f : 0.0f) != 0.0f;
     }
-    c.procWindowSec = ReadFloat(p, s, L"ProcWindowSec", d.procWindowSec);
     c.othersSpecials = ReadFloat(p, s, L"OthersSpecials", d.othersSpecials) != 0.0f;
     c.onTop = ReadFloat(p, s, L"OnTop", d.onTop) != 0.0f;
     c.headOffset = ReadFloat(p, s, L"HeadOffset", d.headOffset);

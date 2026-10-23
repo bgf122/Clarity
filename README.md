@@ -10,13 +10,14 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Things the game only puts in chat get numbers too: nano you gain, heals and nano you give, health and nano drains.
   - Numbers on you are signed: -damage taken, +heals and gains.
   - Several hits on one target start side by side and rise straight up from where they happened.
-  - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and in raids only your own procs show.
+  - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
-  - Readable plates over players, NPCs and pets: level and name, an org/title line, and a health bar.
+  - Readable plates over players, NPCs and pets: the full name centred over a health bar that stretches with it, the level in bold to the left in the bar's consider colour, and an org/title line.
   - Your selected target and your fight target get corner brackets, and stay visible beyond the 30 m tag range.
-  - Overlapping plates are moved apart and keep their order, they don't bob with walking, and you can click a plate to select that character.
+  - Characters attacking you get slowly blinking red brackets.
+  - Overlapping plates are moved apart calmly and keep their order, they don't bob with walking, and you can click a plate to select that character.
+  - Like the game's own tags, plates are hidden behind walls and terrain, but not behind other characters.
   - Switch players, NPCs or pets off to get the game's own tags for them.
-  - Like the game's own tags, plates are hidden behind walls and objects.
   - Works with ao-vk: plates are drawn after its shadows and effects.
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 

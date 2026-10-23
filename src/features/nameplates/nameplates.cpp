@@ -15,6 +15,7 @@
 #include "../../core/n3.h"
 #include "../../core/signatures.h"
 #include "../../core/text_raster.h"
+#include "../../core/threat.h"
 
 #include <windows.h>
 
@@ -50,7 +51,7 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 0x18, "RSprite vertex");
 
-constexpr int kTexW = 512;
+constexpr int kTexW = 1024; // wide enough for long names at full size, with the level beside them
 constexpr int kTexH = 256;
 constexpr int kPad = 8;          // texels around text pieces (outline + shadow room)
 // Sizes are designed for a 40 px name font and scaled by g_scale so the texture's text is drawn
@@ -81,6 +82,15 @@ struct Plate {
     float nameCap = 30.0f;      // texels, what MinPx/MaxPx refer to
     int anchorRow = kTexH;      // texel row placed at the game's anchor (above the head)
     int barY = -1;              // -1 = no bar
+    int barW = 0;               // texels: g_barW, or wider to span a long name
+    std::wstring level;         // drawn by Upload in the bar's colour; empty = none
+    float levelX = 0.0f, levelY = 0.0f;
+    // "Attacking you" marker: a soft red ring around level, name and bar, blurred once per layout.
+    // "Attacking you" brackets (red, outside the target ones): fill and outline masks of their box,
+    // whose (0, 0) is texel (atkX, atkY), and how strongly they're painted (0 = off, blinks).
+    raster::Mask atkFill, atkOutline;
+    int atkX = 0, atkY = 0;
+    int atkLevel = 0; // 0..kBlinkSteps
     int hpPct = -1;
     uint32_t barRgb = 0;
     unsigned version = 0;
@@ -100,6 +110,10 @@ struct Plate {
     DWORD stackTick = 0;
     float headHeight = 0.0f; // smoothed anchor height above the character's position (world units)
     DWORD headTick = 0;      // 0 = not measured yet
+    bool inSight = true;     // the camera sees the plate past walls and terrain (characters don't count)
+    DWORD sightTick = 0;     // last line-of-sight test
+    float sightAlpha = 1.0f; // fades towards inSight
+    DWORD sightFadeTick = 0;
     Vertex origVerts[4] = {}; // the game's quad, restored when modern plates are turned off
     float origHalfW = 0.0f, origHalfH = 0.0f;
 };
@@ -143,9 +157,18 @@ constexpr int kTargetingScanTimer = 0x0C;
 constexpr float kStackDepthTie = 1.0f; // metres: closer than this counts as the same distance
 constexpr float kStackSwapDepth = 4.0f; // metres: the plate behind must get this much nearer to take the lower spot
 constexpr DWORD kPairForgetMs = 1500;   // an order is forgotten once its two plates stop overlapping this long
+constexpr DWORD kStackHoldMs = 600;     // stacked plates stay stacked this long after they part
+constexpr float kStackKeepPx = 10.0f;   // ... and while they're within this many pixels of each other
+constexpr float kStackRiseRate = 10.0f; // 1/s: how fast a plate moves up out of the way
+constexpr float kStackFallRate = 3.0f;  // 1/s: how fast it settles back down
 constexpr float kHeadFollow = 2.5f;    // 1/s: how fast the plate follows the head's height (walk bob is ~2-3 Hz)
 constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height is taken at once
-raster::Font g_nameFont, g_smallFont, g_pctFont;
+constexpr DWORD kSightEveryMs = 100;   // line-of-sight test interval per plate
+constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes between
+constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
+constexpr int kBlinkSteps = 6;         // painted strengths (each change re-uploads the texture)
+constexpr float kBlinkLow = 0.25f;     // faintest strength
+raster::Font g_nameFont, g_smallFont, g_pctFont, g_levelFont;
 bool g_fontsTried = false;
 bool g_fontsOk = false;
 bool g_buildFailed = false; // stop retrying after a texture/font failure
@@ -313,7 +336,8 @@ bool EnsureFonts()
         g_barBorder = S(2);
         g_fontsOk = g_nameFont.Create(np.fontName, S(40), np.fontWeight) &&
                     g_smallFont.Create(np.fontName, S(28), np.fontWeight) &&
-                    g_pctFont.Create(np.fontName, S(30), np.fontWeight);
+                    g_pctFont.Create(np.fontName, S(30), np.fontWeight) &&
+                    g_levelFont.Create(np.fontName, S(44), std::max(np.fontWeight, 700)); // the level in bold
         Log("[np] text drawn at %.2fx (name %d px for MaxPx %.0f)", g_scale, S(40), np.maxPx);
         if (!g_fontsOk)
             Log("[np] font creation failed - nameplates unchanged");
@@ -321,14 +345,14 @@ bool EnsureFonts()
     return g_fontsOk;
 }
 
-// Layout: name line, health bar (percentage inside), org/title line.
+// Layout: the name centred over the health bar (percentage inside), the level larger to the left of
+// both and vertically centred on them, and the org/title line below.
 void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
 {
     const NameplateConfig& cfg = Cfg().np;
     Canvas c;
     const float maxW = static_cast<float>(kTexW - 4 * kPad);
 
-    // Line 1: level (small, grey) + name.
     // Only characters (Identity type 50000) have level and health; corpses ("Remains of ...") are
     // Corpse_t dynels of type 51050 and get just their name.
     const std::string rawName = n3::Name(id);
@@ -340,21 +364,23 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
         if (lvl > 0 && lvl != n3::kNoValue)
             level = std::to_wstring(lvl);
     }
-    const float gap = level.empty() ? 0.0f : static_cast<float>(S(10));
-    const float levelW = level.empty() ? 0.0f : g_smallFont.TextWidth(level.c_str(), static_cast<int>(level.size()));
-    const std::wstring name = Fit(g_nameFont, Widen(rawName), maxW - levelW - gap);
+    const float gap = level.empty() ? 0.0f : static_cast<float>(S(12));
+    const float levelW = level.empty() ? 0.0f : g_levelFont.TextWidth(level.c_str(), static_cast<int>(level.size()));
+    // The name is centred on the plate; the level sits beside the name and bar, so it only limits
+    // the name when the name is wider than the bar.
+    const std::wstring name = Fit(g_nameFont, Widen(rawName), maxW - 2.0f * (levelW + gap));
     const float nameW = g_nameFont.TextWidth(name.c_str(), static_cast<int>(name.size()));
 
     const int m = S(10);              // bracket margin, same on every side
     const int th = std::max(4, S(6)); // bracket thickness
     const int len = S(24);            // bracket arm length
-    const float nameTop = static_cast<float>(kPad + (p.role == Role::Normal ? 0 : m + th));
+    const int e = S(8);               // the "attacking you" brackets sit this much outside the target ones
+    // Every plate has room for both bracket sets, so a plate doesn't move when it becomes a target or
+    // starts being attacked.
+    const float nameTop = static_cast<float>(kPad + g_outline + e + m + th);
     float y = nameTop;
-    const float nameLineW = levelW + gap + nameW;
-    const float x0 = (kTexW - nameLineW) * 0.5f;
-    if (!level.empty())
-        DrawText(c, g_smallFont, level, x0, y + g_nameFont.Ascent() - g_smallFont.Ascent(), 0xB4B4B4);
-    DrawText(c, g_nameFont, name, x0 + levelW + gap, y, NameRgb(id, ind));
+    const float nameLineW = nameW;
+    DrawText(c, g_nameFont, name, (kTexW - nameW) * 0.5f, y, NameRgb(id, ind));
     y += g_nameFont.Height();
     float boxBottom = nameTop + g_nameFont.Ascent(); // without a bar: the name's baseline
     // Visible extent (texels): top of the name's capitals to the lowest thing drawn, and the
@@ -363,17 +389,34 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     float visBottom = nameTop + g_nameFont.Height(); // the name's descenders
     float visHalfW = nameLineW * 0.5f;
 
-    // Health bar slot, right under the name.
+    // Health bar slot, right under the name: the usual width, or as wide as the name plus a little
+    // so a long name never overhangs it.
     p.barY = -1;
+    p.barW = std::max(g_barW, static_cast<int>(std::ceil(nameW)) + 2 * S(8));
     if (cfg.showHealth && !corpse) {
         const int life = n3::GetSkill(id, n3::kStatLife);
         if (life > 0 && life != n3::kNoValue) {
             p.barY = static_cast<int>(y) + S(2);
             boxBottom = static_cast<float>(p.barY + g_barH + g_barBorder);
             visBottom = boxBottom;
-            visHalfW = std::max(visHalfW, g_barW * 0.5f + g_barBorder);
+            visHalfW = std::max(visHalfW, p.barW * 0.5f + g_barBorder);
             y = static_cast<float>(p.barY + g_barH + S(4));
         }
+    }
+
+    // The level: left of the name and bar, its capitals centred on them vertically, in the bar's
+    // (consider) colour - so Upload draws it. Kept inside the texture if a very large MaxPx leaves
+    // less room than it needs.
+    p.level = level;
+    if (!level.empty()) {
+        float blockLeft = (kTexW - nameW) * 0.5f;
+        if (p.barY >= 0)
+            blockLeft = std::min(blockLeft, static_cast<float>((kTexW - p.barW) / 2 - g_barBorder));
+        p.levelX = std::max(static_cast<float>(kPad), blockLeft - gap - levelW);
+        const float centre = (visTop + boxBottom) * 0.5f;
+        const float capH = g_levelFont.Ascent() * 0.72f;
+        p.levelY = centre - g_levelFont.Ascent() + capH * 0.5f;
+        visHalfW = std::max(visHalfW, kTexW * 0.5f - p.levelX);
     }
 
     std::string second;
@@ -383,54 +426,63 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
         if (!org.empty())
             second = second.empty() ? org : second + " \xB7 " + org;
     }
-    // The row that sits at the game's anchor: where an unselected plate's bottom edge is, measured
-    // from this plate's name. Selected / fight-target plates add brackets around the name and bar
-    // without moving them; their brackets and org line extend past this row.
-    p.anchorRow = static_cast<int>(std::ceil(y + (second.empty() ? 0.0f : g_smallFont.Height()))) + 2;
+    // The bracket frame: the level, name and bar with the same margin on every side, symmetric about
+    // the texture centre (where name and bar are centred).
+    const int left = std::max(0, kTexW / 2 - static_cast<int>(std::ceil(visHalfW)) - m - th);
+    const int right = kTexW - left; // exclusive, mirrors left exactly
+    const float capTop = nameTop + g_nameFont.Ascent() - g_nameFont.Ascent() * 0.72f;
+    const int top = std::max(0, static_cast<int>(std::floor(capTop)) - m - th);
+    const int bottom = std::min(kTexH, static_cast<int>(std::ceil(boxBottom)) + m + th); // exclusive
+    // Corner brackets of a box into a mask whose (0, 0) is texel (ox, oy).
+    auto brackets = [&](raster::Mask& mask, int ox, int oy, int l, int t, int r, int b, int arm, int thick) {
+        auto rect = [&](int x, int yy, int w, int h) {
+            for (int j = std::max(0, yy - oy); j < std::min(mask.h, yy - oy + h); ++j)
+                for (int i = std::max(0, x - ox); i < std::min(mask.w, x - ox + w); ++i)
+                    mask.a[static_cast<size_t>(j) * mask.w + i] = 1.0f;
+        };
+        rect(l, t, arm, thick);                 rect(l, t, thick, arm);
+        rect(r - arm, t, arm, thick);           rect(r - thick, t, thick, arm);
+        rect(l, b - thick, arm, thick);         rect(l, b - arm, thick, arm);
+        rect(r - arm, b - thick, arm, thick);   rect(r - thick, b - arm, thick, arm);
+    };
 
-    // Selected / fight target: corner brackets framing the name and the bar with the same margin
-    // on every side, symmetric about the texture centre (where name and bar are centred).
+    // Selected / fight target: the brackets themselves.
     if (p.role != Role::Normal) {
         const uint32_t rgb = p.role == Role::Fighting ? 0xFF6030 : (p.alsoFight ? 0xFFC040 : 0xFFFFFF);
-        float halfW = nameLineW * 0.5f;
-        if (p.barY >= 0) {
-            const int barOuterLeft = (kTexW - g_barW) / 2 - g_barBorder; // as Upload draws it
-            halfW = std::max(halfW, static_cast<float>(kTexW / 2 - barOuterLeft));
-        }
-        const int left = std::max(0, kTexW / 2 - static_cast<int>(std::ceil(halfW)) - m - th);
-        const int right = kTexW - left; // exclusive, mirrors left exactly
-        const float capTop = nameTop + g_nameFont.Ascent() - g_nameFont.Ascent() * 0.72f;
-        const int top = std::max(0, static_cast<int>(std::floor(capTop)) - m - th);
-        const int bottom = std::min(kTexH, static_cast<int>(std::ceil(boxBottom)) + m + th); // exclusive
         raster::Mask mask(kTexW, kTexH);
-        auto rect = [&](int x, int yy, int w, int h) {
-            for (int j = std::max(0, yy); j < std::min(kTexH, yy + h); ++j)
-                for (int i = std::max(0, x); i < std::min(kTexW, x + w); ++i)
-                    mask.a[j * kTexW + i] = 1.0f;
-        };
-        rect(left, top, len, th);                 rect(left, top, th, len);
-        rect(right - len, top, len, th);          rect(right - th, top, th, len);
-        rect(left, bottom - th, len, th);         rect(left, bottom - len, th, len);
-        rect(right - len, bottom - th, len, th);  rect(right - th, bottom - len, th, len);
+        brackets(mask, 0, 0, left, top, right, bottom, len, th);
         c.Over(0, 0, raster::Dilate(mask, g_outline), 0x000000, 0.9f);
         c.Over(0, 0, mask, rgb, 1.0f);
-        y = std::max(y, static_cast<float>(bottom + S(4)));
     }
 
-    // Below: title and org.
+    // "Attacking you": red brackets a little outside the target frame, blinked by Upload. Built here
+    // as fill + outline masks covering just their box, so blinking repaints only that region.
+    {
+        const int al = std::max(0, left - e), ar = std::min(kTexW, right + e);
+        const int at = std::max(0, top - e), ab = std::min(kTexH, bottom + e);
+        const int o = g_outline;
+        p.atkX = al - o;
+        p.atkY = at - o;
+        p.atkFill = raster::Mask(ar - al + 2 * o, ab - at + 2 * o);
+        // Longer arms and slightly thicker than the target brackets.
+        brackets(p.atkFill, p.atkX, p.atkY, al, at, ar, ab, len + e + S(12), th + std::max(1, S(2)));
+        p.atkOutline = raster::Dilate(p.atkFill, o);
+        y = std::max(y, static_cast<float>(ab + S(4)));
+    }
+
+    // Below the brackets: title and org.
     if (!second.empty()) {
-        {
-            const std::wstring line = Fit(g_smallFont, Widen(second), maxW);
-            const float w = g_smallFont.TextWidth(line.c_str(), static_cast<int>(line.size()));
-            DrawText(c, g_smallFont, line, (kTexW - w) * 0.5f, y, SideRgb(n3::GetSkill(id, n3::kStatSide)));
-            visBottom = y + g_smallFont.Ascent();
-            visHalfW = std::max(visHalfW, w * 0.5f);
-            y += g_smallFont.Height();
-        }
+        const std::wstring line = Fit(g_smallFont, Widen(second), maxW);
+        const float w = g_smallFont.TextWidth(line.c_str(), static_cast<int>(line.size()));
+        DrawText(c, g_smallFont, line, (kTexW - w) * 0.5f, y, SideRgb(n3::GetSkill(id, n3::kStatSide)));
+        visHalfW = std::max(visHalfW, w * 0.5f);
+        y += g_smallFont.Height();
     }
+    // The row that sits at the game's anchor: the plate's bottom edge. The same for a character's
+    // normal, selected and attacking plate, since they share the layout.
+    p.anchorRow = static_cast<int>(std::ceil(y)) + 2;
 
-    // Footprint for stacking and clicking, identical for a character's normal and selected plate:
-    // name capitals down to where an unselected plate ends (anchorRow); brackets don't count.
+    // Footprint for stacking and clicking: name capitals down to the plate's bottom edge.
     visBottom = static_cast<float>(p.anchorRow - 2);
     p.hitHalfW = visHalfW;
     p.visTop = visTop;
@@ -446,6 +498,34 @@ void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t 
     for (int y = std::max(0, y0); y < std::min(kTexH, y0 + h); ++y)
         for (int x = std::max(0, x0); x < std::min(kTexW, x0 + w); ++x)
             px[static_cast<size_t>(y) * kTexW + x] = argb;
+}
+
+// Straight-alpha "over" of one colour through a mask onto ARGB pixels, touching only the mask's
+// box (the blinking brackets repaint just that much).
+void OverMask(std::vector<uint32_t>& px, int x0, int y0, const raster::Mask& m, uint32_t rgb, float alpha)
+{
+    for (int y = 0; y < m.h; ++y) {
+        const int ty = y0 + y;
+        if (ty < 0 || ty >= kTexH)
+            continue;
+        for (int x = 0; x < m.w; ++x) {
+            const int tx = x0 + x;
+            const float sa = m.a[static_cast<size_t>(y) * m.w + x] * alpha;
+            if (tx < 0 || tx >= kTexW || sa <= 0.0f)
+                continue;
+            uint32_t& d = px[static_cast<size_t>(ty) * kTexW + tx];
+            const float da = (d >> 24) / 255.0f;
+            const float oa = sa + da * (1.0f - sa);
+            uint32_t out = static_cast<uint32_t>(oa * 255.0f + 0.5f) << 24;
+            for (int shift = 0; shift <= 16; shift += 8) {
+                const float sc = ((rgb >> shift) & 0xFF) / 255.0f;
+                const float dc = ((d >> shift) & 0xFF) / 255.0f;
+                const float oc = (sc * sa + dc * da * (1.0f - sa)) / oa;
+                out |= static_cast<uint32_t>(std::clamp(oc, 0.0f, 1.0f) * 255.0f + 0.5f) << shift;
+            }
+            d = out;
+        }
+    }
 }
 
 // Straight-alpha "over" of a canvas onto ARGB pixels.
@@ -476,11 +556,16 @@ void Composite(std::vector<uint32_t>& px, const Canvas& c)
 void Upload(Plate& p, int tenths, uint32_t barRgb)
 {
     std::vector<uint32_t> px = p.text;
+    if (p.atkLevel > 0 && !p.atkFill.a.empty()) {
+        const float strength = static_cast<float>(p.atkLevel) / kBlinkSteps;
+        OverMask(px, p.atkX, p.atkY, p.atkOutline, 0x000000, 0.9f * strength);
+        OverMask(px, p.atkX, p.atkY, p.atkFill, 0xFF2A2A, strength);
+    }
     if (p.barY >= 0 && tenths >= 0) {
-        const int x0 = (kTexW - g_barW) / 2;
-        FillRect(px, x0 - g_barBorder, p.barY - g_barBorder, g_barW + 2 * g_barBorder, g_barH + 2 * g_barBorder, 0xF0000000);
-        FillRect(px, x0, p.barY, g_barW, g_barH, 0xFF333333);
-        FillRect(px, x0, p.barY, g_barW * tenths / 1000, g_barH, 0xFF000000 | barRgb);
+        const int x0 = (kTexW - p.barW) / 2;
+        FillRect(px, x0 - g_barBorder, p.barY - g_barBorder, p.barW + 2 * g_barBorder, g_barH + 2 * g_barBorder, 0xF0000000);
+        FillRect(px, x0, p.barY, p.barW, g_barH, 0xFF333333);
+        FillRect(px, x0, p.barY, p.barW * tenths / 1000, g_barH, 0xFF000000 | barRgb);
 
         wchar_t label[16];
         swprintf_s(label, L"%d.%d%%", tenths / 10, tenths % 10);
@@ -488,6 +573,11 @@ void Upload(Plate& p, int tenths, uint32_t barRgb)
         Canvas c;
         const float w = g_pctFont.TextWidth(label, len);
         DrawText(c, g_pctFont, label, (kTexW - w) * 0.5f, p.barY + (g_barH - g_pctFont.Height()) * 0.5f, 0xFFFFFF);
+        Composite(px, c);
+    }
+    if (!p.level.empty()) {
+        Canvas c;
+        DrawText(c, g_levelFont, p.level, p.levelX, p.levelY, barRgb);
         Composite(px, c);
     }
     game::WriteTexture(game::VisualMaterialTexture(p.vm), px.data(), kTexW, kTexH);
@@ -509,15 +599,17 @@ int HealthTenths(const game::Identity& id)
 
 // Current bar state for the plate; returns false if nothing needs redrawing. Targets the game
 // can't consider (e.g. other players) get its grey.
+// The bar's health and consider colour. The colour is also the level's, so it's worked out for
+// plates without a bar too (health switched off).
 bool BarChanged(const Plate& p, const game::Identity& id, int* tenths, uint32_t* rgb)
 {
-    if (p.barY < 0)
+    if (p.barY < 0 && p.level.empty())
         return false;
     bool considerable = false;
     *rgb = ConsiderRgb(id, &considerable);
     if (!considerable)
         *rgb = 0xAAAAAA;
-    *tenths = HealthTenths(id);
+    *tenths = p.barY >= 0 ? HealthTenths(id) : -1;
     return *tenths != p.hpPct || *rgb != p.barRgb;
 }
 
@@ -582,8 +674,16 @@ struct PairOrder {
 };
 std::map<std::pair<uint64_t, uint64_t>, PairOrder> g_pairOrder;
 
+// Whether the two plates were stacked within kStackHoldMs (overlapping, or within the keep margin).
+bool RecentlyStacked(const game::Identity& a, const game::Identity& b, DWORD now)
+{
+    auto it = g_pairOrder.find(std::minmax(Key(a), Key(b)));
+    return it != g_pairOrder.end() && now - it->second.tick < kStackHoldMs;
+}
+
 // Whether q's plate keeps its spot and me's moves above it. dz = q's depth - me's depth.
-bool StackFirst(const game::Identity& q, const game::Identity& me, float dz, DWORD now)
+// overlapping: they overlap now (refreshes the pair's time); false while only held stacked.
+bool StackFirst(const game::Identity& q, const game::Identity& me, float dz, DWORD now, bool overlapping)
 {
     const uint64_t kq = Key(q), km = Key(me);
     // Nearer goes first; about the same distance goes by identity.
@@ -595,7 +695,10 @@ bool StackFirst(const game::Identity& q, const game::Identity& me, float dz, DWO
         if (kept != qFirst && std::fabs(dz) < kStackSwapDepth)
             qFirst = kept; // not clearly reversed yet: keep the order
     }
-    g_pairOrder[pair] = {(kq < km) == qFirst, now};
+    PairOrder& order = g_pairOrder[pair];
+    order.lowFirst = (kq < km) == qFirst;
+    if (overlapping || !order.tick)
+        order.tick = now;
     if (g_pairOrder.size() > 512) {
         for (auto old = g_pairOrder.begin(); old != g_pairOrder.end();)
             old = now - old->second.tick > kPairForgetMs ? g_pairOrder.erase(old) : std::next(old);
@@ -730,9 +833,9 @@ void Build(uint8_t* ind)
         if (replacing)
             p.born -= static_cast<DWORD>(Cfg().np.fadeInSec * 1000.0f) + 1;
         // A name label's states, so renderers treat the plate like the game's own names (ao-vk draws those
-        // after its shadows and effects). Depth-tested like the game's tags, so walls and objects in
-        // front hide it.
-        if (!game::MaterialSetLabelStates(game::VisualMaterialMaterial(p.vm), false)) {
+        // after its shadows and effects). Drawn over the scene, so characters in front don't hide
+        // it; walls and terrain hide it through the line-of-sight test in the update.
+        if (!game::MaterialSetLabelStates(game::VisualMaterialMaterial(p.vm), true)) {
             static bool warned = false;
             if (!warned) {
                 Log("[np] couldn't set the render states on the plate material");
@@ -892,6 +995,22 @@ int __fastcall Hook_Update(uint8_t* ind)
         Upload(p, pct, rgb);
     }
 
+    // Attacking us: the red brackets, blinking slowly (full when the attack starts, fading to faint
+    // and back). Not on the dead.
+    {
+        DWORD since = 0;
+        int level = 0;
+        if (threat::IsAttackingMe(id, &since) && p.hpPct != 0) {
+            const float phase = static_cast<float>((GetTickCount() - since) % kBlinkMs) / kBlinkMs;
+            const float strength = kBlinkLow + (1.0f - kBlinkLow) * 0.5f * (1.0f + std::cos(phase * 6.2831853f));
+            level = std::max(1, static_cast<int>(std::lround(strength * kBlinkSteps)));
+        }
+        if (level != p.atkLevel) {
+            p.atkLevel = level;
+            Upload(p, p.hpPct, p.barRgb);
+        }
+    }
+
     // Size: the name's capitals are NaturalSize world units, clamped to MinPx..MaxPx on screen.
     game::Vec3 pos;
     if (!game::IndicatorPosition(id, &pos))
@@ -941,6 +1060,29 @@ int __fastcall Hook_Update(uint8_t* ind)
     // Plates other than your selected / fight target are slightly see-through.
     if (p.role == Role::Normal)
         alpha *= std::clamp(cfg.otherOpacity, 0.1f, 1.0f);
+
+    // Hidden behind walls and terrain like the game's tags, but not behind characters: the line from
+    // the camera to the plate is tested against the playfield's static world (a few times a
+    // second, not every frame), and the plate fades out while it is blocked.
+    {
+        const DWORD now = GetTickCount();
+        if (!p.sightTick || now - p.sightTick >= kSightEveryMs) {
+            bool known = false;
+            const bool clear = game::LineOfSight(game::CameraWorldPos(), pos, &known);
+            p.inSight = !known || clear;
+            p.sightTick = now;
+        }
+        const float dt = p.sightFadeTick ? std::min(0.1f, (now - p.sightFadeTick) / 1000.0f) : 1.0f;
+        p.sightFadeTick = now;
+        const float step = dt / kSightFadeSec;
+        p.sightAlpha = p.inSight ? std::min(1.0f, p.sightAlpha + step) : std::max(0.0f, p.sightAlpha - step);
+        if (p.sightAlpha <= 0.0f) {
+            game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
+            p.screenTick = 0; // no footprint for stacking or clicking while hidden
+            return keep;
+        }
+        alpha *= p.sightAlpha;
+    }
     const uint32_t diffuse = (static_cast<uint32_t>(alpha * 255.0f + 0.5f) << 24) | 0xFFFFFF;
 
     // Screen rectangle of the plate where the game puts it (bottom edge at the anchor), and
@@ -963,13 +1105,22 @@ int __fastcall Hook_Update(uint8_t* ind)
             auto collide = [&](const RECT& r, float qPriority, const game::Identity& qid) {
                 if (qid.type == p.id.type && qid.instance == p.id.instance)
                     return; // never against another plate of the same character
+                // Plates that are stacked stay stacked while they're within a margin of each other,
+                // and for kStackHoldMs after they part, so characters moving about in a group don't
+                // make their plates jump up and down every time they touch or come apart.
+                const bool held = RecentlyStacked(qid, p.id, now);
+                const float margin = held ? kStackKeepPx : 0.0f;
                 const float bottom = sy - visBelow - targetUp, top = bottom - h;
-                if (sx + w2 <= r.left || sx - w2 >= r.right || top >= r.bottom || bottom <= r.top)
+                const bool overlapping = !(sx + w2 + margin <= r.left || sx - w2 - margin >= r.right ||
+                                           top - margin >= r.bottom || bottom + margin <= r.top);
+                if (!overlapping && !held)
                     return;
                 // Farther plates make room for nearer ones, and an order once set is kept while the
                 // two overlap (StackFirst), so it doesn't flip with small camera or NPC moves.
-                if (!StackFirst(qid, p.id, qPriority - priority, now))
+                if (!StackFirst(qid, p.id, qPriority - priority, now, overlapping))
                     return;
+                if (!overlapping && bottom <= r.top - gap)
+                    return; // held, and already above it
                 targetUp = sy - visBelow - (static_cast<float>(r.top) - gap);
                 moved = true;
             };
@@ -986,11 +1137,12 @@ int __fastcall Hook_Update(uint8_t* ind)
                 break;
         }
     }
-    // Glide instead of jumping.
+    // Glide instead of jumping: up fairly quickly (names mustn't overlap for long), back down slowly.
     const DWORD tick = GetTickCount();
     const float dt = p.stackTick ? std::min(0.1f, (tick - p.stackTick) / 1000.0f) : 1.0f;
     p.stackTick = tick;
-    p.stackUp += (targetUp - p.stackUp) * std::min(1.0f, dt * 14.0f);
+    const float rate = targetUp > p.stackUp ? kStackRiseRate : kStackFallRate;
+    p.stackUp += (targetUp - p.stackUp) * std::min(1.0f, dt * rate);
     const float stackWorld = p.stackUp / ppu;
 
     auto* base = static_cast<uint8_t*>(sprite);

@@ -146,8 +146,6 @@ const char kDefaultIni[] =
     "Stack=1\n"
     "; Opacity of plates other than your selected / fight target (0.1-1)\n"
     "OtherOpacity=0.9\n"
-    "; 1 = draw nameplates over the scene (objects can't hide them)\n"
-    "OnTop=1\n"
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
     "FadeInSec=0.25\n"
     "FadeStart=28\n"
@@ -306,7 +304,6 @@ void LoadConfig()
     n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
     GetPrivateProfileStringW(ns, L"Font", dn.fontName, n.fontName, 64, p);
     n.fontWeight = static_cast<int>(ReadFloat(p, ns, L"FontWeight", static_cast<float>(dn.fontWeight)));
-    n.onTop = ReadFloat(p, ns, L"OnTop", dn.onTop) != 0.0f;
     n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);

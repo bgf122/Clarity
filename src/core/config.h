@@ -106,7 +106,6 @@ struct NameplateConfig {
     bool showHealth = true;
     wchar_t fontName[64] = L"Verdana"; // the GUI's TrueType face; read at game start
     int fontWeight = 400;
-    bool onTop = true;         // draw over the scene
     bool clickToTarget = true; // left-click a plate to select that character
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target

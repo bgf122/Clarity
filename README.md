@@ -16,6 +16,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Your selected target and your fight target get corner brackets, and stay visible beyond the 30 m tag range.
   - Overlapping plates are moved apart and keep their order, they don't bob with walking, and you can click a plate to select that character.
   - Switch players, NPCs or pets off to get the game's own tags for them.
+  - Like the game's own tags, plates are hidden behind walls and objects.
   - Works with ao-vk: plates are drawn after its shadows and effects.
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 

@@ -730,8 +730,9 @@ void Build(uint8_t* ind)
         if (replacing)
             p.born -= static_cast<DWORD>(Cfg().np.fadeInSec * 1000.0f) + 1;
         // A name label's states, so renderers treat the plate like the game's own names (ao-vk draws those
-        // after its shadows and effects); with OnTop also over the scene, so objects can't cover it.
-        if (!game::MaterialSetLabelStates(game::VisualMaterialMaterial(p.vm), Cfg().np.onTop)) {
+        // after its shadows and effects). Depth-tested like the game's tags, so walls and objects in
+        // front hide it.
+        if (!game::MaterialSetLabelStates(game::VisualMaterialMaterial(p.vm), false)) {
             static bool warned = false;
             if (!warned) {
                 Log("[np] couldn't set the render states on the plate material");

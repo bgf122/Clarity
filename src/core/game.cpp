@@ -460,10 +460,10 @@ bool MaterialSetLabelStates(void* material, bool onTop)
     g_setRenderState(state, kD3DRS_ALPHABLENDENABLE, 1);
     g_setRenderState(state, kD3DRS_SRCBLEND, kD3DBLEND_SRCALPHA);
     g_setRenderState(state, kD3DRS_DESTBLEND, kD3DBLEND_INVSRCALPHA);
-    if (onTop) {
-        g_setRenderState(state, kD3DRS_ZENABLE, 0);
-        g_setRenderState(state, kD3DRS_ZWRITEENABLE, 0);
-    }
+    // Depth: tested against the scene (hidden behind walls, like the game's own tags) unless onTop,
+    // and never written, so a plate's see-through corners don't cut holes in plates behind it.
+    g_setRenderState(state, kD3DRS_ZENABLE, onTop ? 0 : 1);
+    g_setRenderState(state, kD3DRS_ZWRITEENABLE, 0);
     return true;
 }
 

@@ -132,6 +132,8 @@ const char kDefaultIni[] =
     "ShowPlayers=1\n"
     "ShowNpcs=1\n"
     "ShowPets=1\n"
+    "; 1 = your own character always has a nameplate (not in first person)\n"
+    "ShowSelf=0\n"
     "ShowLevel=1\n"
     "; Org / title line\n"
     "ShowOrg=1\n"
@@ -145,6 +147,10 @@ const char kDefaultIni[] =
     "Stack=1\n"
     "; Opacity of plates other than your selected / fight target (0.1-1)\n"
     "OtherOpacity=0.9\n"
+    "; Dark panel behind level, name and health bar, so plates stand out on bright backgrounds (0-1, 0 = none)\n"
+    "BackgroundOpacity=0.1\n"
+    "; Your selected / fight target's plate is this much bigger than the others (1-2, 1.1 = 10% bigger)\n"
+    "TargetScale=1.1\n"
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
     "FadeInSec=0.25\n"
     "FadeStart=28\n"
@@ -301,6 +307,7 @@ void LoadConfig()
     n.showPlayers = ReadFloat(p, ns, L"ShowPlayers", dn.showPlayers) != 0.0f;
     n.showNpcs = ReadFloat(p, ns, L"ShowNpcs", dn.showNpcs) != 0.0f;
     n.showPets = ReadFloat(p, ns, L"ShowPets", dn.showPets) != 0.0f;
+    n.showSelf = ReadFloat(p, ns, L"ShowSelf", dn.showSelf) != 0.0f;
     n.showLevel = ReadFloat(p, ns, L"ShowLevel", dn.showLevel) != 0.0f;
     n.showOrg = ReadFloat(p, ns, L"ShowOrg", dn.showOrg) != 0.0f;
     n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
@@ -309,6 +316,8 @@ void LoadConfig()
     n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);
+    n.backgroundOpacity = ReadFloat(p, ns, L"BackgroundOpacity", dn.backgroundOpacity);
+    n.targetScale = std::clamp(ReadFloat(p, ns, L"TargetScale", dn.targetScale), 1.0f, 2.0f);
     n.fadeInSec = ReadFloat(p, ns, L"FadeInSec", dn.fadeInSec);
     n.fadeStart = ReadFloat(p, ns, L"FadeStart", dn.fadeStart);
     {

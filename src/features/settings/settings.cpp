@@ -106,6 +106,8 @@ const Item kItems[] = {
     {"CLR_NpMinPx", L"MinPx", "Smallest on screen:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
     {"CLR_NpMaxPx", L"MaxPx", "Largest on screen:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},
     {"CLR_NpOtherOpacity", L"OtherOpacity", "Opacity of plates other than your target:", NF(otherOpacity, 0.1, 1, "%.0f%%", 100), nullptr},
+    {"CLR_NpBackgroundOpacity", L"BackgroundOpacity", "Background behind the plate:", NF(backgroundOpacity, 0, 1, "%.0f%%", 100), nullptr},
+    {"CLR_NpTargetScale", L"TargetScale", "Size of your target's plate:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
     {"CLR_NpStack", L"Stack", "Don't let nameplates overlap (farther ones move up)", NB(stack), nullptr},
     {"CLR_NpClickToTarget", L"ClickToTarget", "Left-click a nameplate to select that character", NB(clickToTarget), nullptr},
     {"CLR_NpShowLevel", L"ShowLevel", "Show level", NB(showLevel), nullptr},
@@ -114,6 +116,7 @@ const Item kItems[] = {
     {"CLR_NpShowPlayers", L"ShowPlayers", "Nameplates for players", NB(showPlayers), nullptr},
     {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
+    {"CLR_NpShowSelf", L"ShowSelf", "Nameplate for your own character", NB(showSelf), nullptr},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 

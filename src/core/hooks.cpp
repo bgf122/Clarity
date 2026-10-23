@@ -7,6 +7,7 @@
 #include <MinHook.h>
 
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 namespace prk {
@@ -144,6 +145,32 @@ bool WritePointer(void* where, void* value)
     if (exec)
         FlushInstructionCache(GetCurrentProcess(), where, sizeof(void*));
     return true;
+}
+
+void** FindImportSlot(void* module, const char* namePrefix)
+{
+    auto* base = static_cast<uint8_t*>(module);
+    if (!base)
+        return nullptr;
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir.VirtualAddress)
+        return nullptr;
+    const size_t len = strlen(namePrefix);
+    for (auto* desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); desc->Name; ++desc) {
+        if (!desc->OriginalFirstThunk)
+            continue;
+        auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->OriginalFirstThunk);
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + desc->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
+                continue;
+            const char* fn = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData)->Name;
+            if (strncmp(fn, namePrefix, len) == 0)
+                return reinterpret_cast<void**>(&slots->u1.Function);
+        }
+    }
+    return nullptr;
 }
 
 } // namespace prk

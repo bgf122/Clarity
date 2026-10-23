@@ -103,6 +103,7 @@ struct NameplateConfig {
     bool showPlayers = true;
     bool showNpcs = true;
     bool showPets = true;
+    bool showSelf = false;     // your own character always has a plate (hidden in first person)
     bool showLevel = true;
     bool showOrg = true;       // org / title line
     bool showHealth = true;
@@ -111,6 +112,8 @@ struct NameplateConfig {
     bool clickToTarget = true; // left-click a plate to select that character
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target
+    float backgroundOpacity = 0.1f; // dark panel behind level, name and bar (0 = none)
+    float targetScale = 1.1f;  // selected / fight-target plates this much bigger than the others
     float fadeInSec = 0.25f;
     float fadeStart = 28.0f;   // metres from you; fully faded at the game's 30 m tag range
     // NPCFamily values that are pets: players' pets 95-98 (98: MP pets), 221 the Devileet vanity pet.

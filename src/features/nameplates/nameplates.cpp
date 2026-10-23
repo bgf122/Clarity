@@ -19,6 +19,8 @@
 
 #include <windows.h>
 
+#include <intrin.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -68,7 +70,7 @@ int g_outline = 2, g_shadowOffset = 2, g_shadowBlur = 2;
 int g_barW = 340, g_barH = 38, g_barBorder = 2; // bar wider than most names (the user's reference)
 constexpr uint32_t kTypeCharacter = 50000;
 
-enum class Kind { Player, Npc, Pet };
+enum class Kind { Player, Npc, Pet, Self };
 // Which Indicator: the 2 s nametag scan's, the selected target's (frame + bar) or the fight target's.
 enum class Role { Normal, Selected, Fighting };
 
@@ -168,6 +170,7 @@ constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height
 constexpr DWORD kSightEveryMs = 100;   // line-of-sight test interval per plate
 constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes between
 constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
+constexpr float kFirstPersonRadius = 1.5f; // your own plate's anchor this close to the camera = first person
 constexpr int kBlinkSteps = 6;         // painted strengths (each change re-uploads the texture)
 constexpr float kBlinkLow = 0.25f;     // faintest strength
 raster::Font g_nameFont, g_smallFont, g_pctFont, g_levelFont;
@@ -347,6 +350,9 @@ bool EnsureFonts()
     return g_fontsOk;
 }
 
+void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb);
+void Composite(std::vector<uint32_t>& px, const Canvas& c);
+
 // Layout: the name centred over the health bar (percentage inside), the level larger to the left of
 // both and vertically centred on them, and the org/title line below.
 void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
@@ -373,10 +379,11 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const std::wstring name = Fit(g_nameFont, Widen(rawName), maxW - 2.0f * (levelW + gap));
     const float nameW = g_nameFont.TextWidth(name.c_str(), static_cast<int>(name.size()));
 
-    const int m = S(10);              // bracket margin, same on every side
-    const int th = std::max(4, S(6)); // bracket thickness
-    const int len = S(24);            // bracket arm length
-    const int e = S(8);               // the "attacking you" brackets sit this much outside the target ones
+    const int m = S(10);               // bracket margin, same on every side
+    const int th = std::max(4, S(8));  // target bracket thickness: bold, readable at a distance
+    const int len = S(52);             // target bracket arm length
+    const int atkTh = th + std::max(1, S(2)); // the "attacking you" brackets: slightly thicker ...
+    const int e = atkTh;               // ... and right outside the target ones
     // Every plate has room for both bracket sets, so a plate doesn't move when it becomes a target or
     // starts being attacked.
     const float nameTop = static_cast<float>(kPad + g_outline + e + m + th);
@@ -435,25 +442,30 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const float capTop = nameTop + g_nameFont.Ascent() - g_nameFont.Ascent() * 0.72f;
     const int top = std::max(0, static_cast<int>(std::floor(capTop)) - m - th);
     const int bottom = std::min(kTexH, static_cast<int>(std::ceil(boxBottom)) + m + th); // exclusive
-    // Corner brackets of a box into a mask whose (0, 0) is texel (ox, oy).
+    // Corner brackets of a box into a mask whose (0, 0) is texel (ox, oy). Arms along the top and
+    // bottom are `arm` texels (at most a third of the width); the ones down the sides stop at about
+    // a third of the height, so the sides stay open in the middle.
     auto brackets = [&](raster::Mask& mask, int ox, int oy, int l, int t, int r, int b, int arm, int thick) {
         auto rect = [&](int x, int yy, int w, int h) {
             for (int j = std::max(0, yy - oy); j < std::min(mask.h, yy - oy + h); ++j)
                 for (int i = std::max(0, x - ox); i < std::min(mask.w, x - ox + w); ++i)
                     mask.a[static_cast<size_t>(j) * mask.w + i] = 1.0f;
         };
-        rect(l, t, arm, thick);                 rect(l, t, thick, arm);
-        rect(r - arm, t, arm, thick);           rect(r - thick, t, thick, arm);
-        rect(l, b - thick, arm, thick);         rect(l, b - arm, thick, arm);
-        rect(r - arm, b - thick, arm, thick);   rect(r - thick, b - arm, thick, arm);
+        const int armH = std::min(arm, (r - l) / 3);
+        const int armV = std::min(arm, std::max(thick * 2, (b - t) * 3 / 10));
+        rect(l, t, armH, thick);                rect(l, t, thick, armV);
+        rect(r - armH, t, armH, thick);         rect(r - thick, t, thick, armV);
+        rect(l, b - thick, armH, thick);        rect(l, b - armV, thick, armV);
+        rect(r - armH, b - thick, armH, thick); rect(r - thick, b - armV, thick, armV);
     };
 
-    // Selected / fight target: the brackets themselves.
+    // Selected (nano) / fight target: the brackets themselves. Fight orange stays apart from the
+    // "attacking you" red.
     if (p.role != Role::Normal) {
-        const uint32_t rgb = p.role == Role::Fighting ? 0xFF6030 : (p.alsoFight ? 0xFFC040 : 0xFFFFFF);
+        const uint32_t rgb = p.role == Role::Fighting ? 0xFF8A1A : (p.alsoFight ? 0xFFD21F : 0xFFFFFF);
         raster::Mask mask(kTexW, kTexH);
         brackets(mask, 0, 0, left, top, right, bottom, len, th);
-        c.Over(0, 0, raster::Dilate(mask, g_outline), 0x000000, 0.9f);
+        c.Over(0, 0, raster::Dilate(mask, g_outline), 0x000000, 1.0f);
         c.Over(0, 0, mask, rgb, 1.0f);
     }
 
@@ -467,7 +479,7 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
         p.atkY = at - o;
         p.atkFill = raster::Mask(ar - al + 2 * o, ab - at + 2 * o);
         // Longer arms and slightly thicker than the target brackets.
-        brackets(p.atkFill, p.atkX, p.atkY, al, at, ar, ab, len + e + S(12), th + std::max(1, S(2)));
+        brackets(p.atkFill, p.atkX, p.atkY, al, at, ar, ab, len + e + S(12), atkTh);
         p.atkOutline = raster::Dilate(p.atkFill, o);
         y = std::max(y, static_cast<float>(ab + S(4)));
     }
@@ -489,7 +501,16 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     p.hitHalfW = visHalfW;
     p.visTop = visTop;
     p.visBottom = visBottom;
-    p.text = c.ToArgb();
+    // A faint dark panel behind level, name and bar (the bracket box), so plates stand out against
+    // bright backgrounds.
+    const float panel = std::clamp(cfg.backgroundOpacity, 0.0f, 1.0f);
+    if (panel > 0.0f) {
+        p.text.assign(static_cast<size_t>(kTexW) * kTexH, 0);
+        FillRect(p.text, left, top, right - left, bottom - top, static_cast<uint32_t>(panel * 255.0f + 0.5f) << 24);
+        Composite(p.text, c);
+    } else {
+        p.text = c.ToArgb();
+    }
     p.nameCap = std::max(1.0f, g_nameFont.Ascent() * 0.72f); // cap height ~ 0.72 of the ascent
     p.hpPct = -1;
     p.barRgb = 0;
@@ -623,8 +644,15 @@ bool HasValue(int v)
 // Pets: the client doesn't get PetMaster/OwnerInstance/PetType for pets (all "no value"/0 in a
 // Debug=1 capture, 2026-10-21); NPCFamily separates them - players' pets were 95/96/97/98, other
 // NPCs 0/36; the Devileet vanity pet is 221. The list is built in (config.h) plus PetFamilies in Clarity.ini.
+bool IsSelf(const game::Identity& id)
+{
+    return id.type == kTypeCharacter && id.instance == game::ClientInstance();
+}
+
 Kind Classify(const game::Identity& id)
 {
+    if (IsSelf(id))
+        return Kind::Self;
     const bool npc = n3::IsNpc(id);
     const int family = n3::GetSkill(id, n3::kStatNpcFamily);
     if (Cfg().fct.debug)
@@ -650,6 +678,7 @@ bool KindVisible(Kind k)
     case Kind::Player: return cfg.showPlayers;
     case Kind::Npc: return cfg.showNpcs;
     case Kind::Pet: return cfg.showPets;
+    case Kind::Self: return cfg.showSelf;
     }
     return true;
 }
@@ -716,6 +745,29 @@ void ForceRescan()
     if (!g_targetingInstance || !*g_targetingInstance)
         return;
     *reinterpret_cast<float*>(static_cast<uint8_t*>(*g_targetingInstance) + kTargetingScanTimer) = 100.0f;
+}
+
+// Your own nameplate (ShowSelf). The 2 s scan (TargetingModule_t::HandleNametags) lists characters
+// with N3Msg_GetDynelsInVicinity(list, includeSelf = false, ...); through GUI.dll's import slot,
+// that one call gets includeSelf = true, so the game makes an Indicator for you like for anyone.
+using VicinityFn = void(__thiscall*)(void* self, void* list, bool includeSelf, bool all, int type);
+VicinityFn g_nextVicinity = nullptr;
+uint8_t* g_handleNametags = nullptr;
+constexpr uintptr_t kHandleNametagsSize = 0x20E; // GUI 0x10025D96..0x10025FA4
+bool g_selfScanned = false;                      // ShowSelf as of the last rescan
+
+bool WantSelf()
+{
+    const NameplateConfig& cfg = Cfg().np;
+    return cfg.enable && cfg.showSelf;
+}
+
+void __fastcall Hook_Vicinity(void* self, void* /*edx*/, void* list, bool includeSelf, bool all, int type)
+{
+    auto* ret = static_cast<uint8_t*>(_ReturnAddress());
+    if (g_handleNametags && ret > g_handleNametags && ret < g_handleNametags + kHandleNametagsSize && WantSelf())
+        includeSelf = true;
+    g_nextVicinity(self, list, includeSelf, all, type);
 }
 
 void* __fastcall Hook_Delete(void* self, void* /*edx*/, unsigned flags)
@@ -934,6 +986,10 @@ int __fastcall Hook_Update(uint8_t* ind)
     if (!keep)
         return keep;
     const NameplateConfig& cfg = Cfg().np;
+    if (WantSelf() != g_selfScanned) {
+        g_selfScanned = WantSelf();
+        ForceRescan(); // your own plate comes or goes at once
+    }
     auto it = g_plates.find(ind);
     if (!cfg.enable) {
         if (it != g_plates.end())
@@ -946,7 +1002,9 @@ int __fastcall Hook_Update(uint8_t* ind)
     if (KeepsGameTag(ind, tagId)) {
         if (it != g_plates.end())
             Restore(ind, it);
-        if (Other(ind, tagId, Role::Selected) || Other(ind, tagId, Role::Fighting))
+        // Your own tag only exists for ShowSelf: hidden once it's off, until the rescan drops it.
+        if (Other(ind, tagId, Role::Selected) || Other(ind, tagId, Role::Fighting) ||
+            (RoleOf(ind) == Role::Normal && IsSelf(tagId)))
             game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
         return keep;
     }
@@ -1017,6 +1075,7 @@ int __fastcall Hook_Update(uint8_t* ind)
     game::Vec3 pos;
     if (!game::IndicatorPosition(id, &pos))
         return keep;
+    const bool target = p.role != Role::Normal;
     // The game's anchor follows the head, so it bobs with walking, running and fighting. Keep the
     // plate's height above the character's own position (its feet, which follow the ground without
     // the bob) and smooth only that; big changes (mounting, zoning, a new model) snap.
@@ -1038,8 +1097,15 @@ int __fastcall Hook_Update(uint8_t* ind)
     const game::Vec3 view = game::ToView(pos);
     if (view.z < 0.1f)
         return keep;
+    // Your own plate is hidden in first person (the camera is inside your head).
+    if (p.kind == Kind::Self && std::sqrt(view.x * view.x + view.y * view.y + view.z * view.z) < kFirstPersonRadius) {
+        game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
+        p.screenTick = 0;
+        return keep;
+    }
     const float ppu = game::PxPerUnit(view.z);
-    const float capPx = std::clamp(cfg.naturalSize * ppu, cfg.minPx, cfg.maxPx);
+    // Your selected and fight targets are a little bigger than the plates around them.
+    const float capPx = std::clamp(cfg.naturalSize * ppu, cfg.minPx, cfg.maxPx) * (target ? cfg.targetScale : 1.0f);
     const float worldPerTexel = capPx / p.nameCap / ppu;
     const float halfW = kTexW * 0.5f * worldPerTexel;
     const float halfH = kTexH * 0.5f * worldPerTexel;
@@ -1277,6 +1343,15 @@ bool Install()
         g_getMouseWindow = reinterpret_cast<GetMouseWindowFn>(GetProcAddress(gui, "?GetMouseWindow@WindowController_c@@QAEPAVWindow@@XZ"));
         if (!g_setTarget || !g_windowController || !g_getMouseWindow)
             Log("[np] click-to-target exports missing - disabled");
+
+        g_handleNametags = reinterpret_cast<uint8_t*>(GetProcAddress(gui, "?HandleNametags@TargetingModule_t@@AAEXXZ"));
+        void** slot = FindImportSlot(gui, "?N3Msg_GetDynelsInVicinity@");
+        if (g_handleNametags && slot && *slot) {
+            g_nextVicinity = reinterpret_cast<VicinityFn>(*slot);
+            if (!WritePointer(slot, reinterpret_cast<void*>(&Hook_Vicinity)))
+                g_nextVicinity = nullptr;
+        }
+        Log("[np] own nameplate (ShowSelf) %s", g_nextVicinity ? "available" : "unavailable: GUI.dll import not found");
     }
     uint8_t* build = FindUnique(SIG_NAMETAG_BUILD, "nametag builder");
     uint8_t* update = FindUnique(SIG_NAMETAG_UPDATE, "nametag update");

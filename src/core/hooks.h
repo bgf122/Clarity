@@ -16,6 +16,10 @@ bool HooksInit();
 // mod changed its protection at the same time. Returns false if the page couldn't be made writable.
 bool WritePointer(void* where, void* value);
 
+// The import-table slot of a loaded module for the first imported function whose (mangled) name
+// starts with namePrefix; nullptr if it has none. Patch it with WritePointer.
+void** FindImportSlot(void* module, const char* namePrefix);
+
 // Create + enable an inline hook. Logs and returns false on failure (target left untouched).
 bool InstallHook(const char* what, void* target, void* detour, void** original);
 

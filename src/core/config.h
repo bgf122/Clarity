@@ -61,6 +61,7 @@ struct FctConfig {
     float critFlashSec = 0.2f;   // crits flash white for this long, 0 = off
     float critShakePx = 4.0f;    // crit sideways shake amplitude, 0 = off
     float glanceScale = 0.85f;   // glancing hits (the server's hit type 2) are drawn this much smaller
+    float actionScale = 0.55f;   // special attack, perk and taunt names ("Fling Shot!", "Thunder"): ~ the game's own size
     bool drainHeals = true;      // show health drains as heals on yourself
     uint32_t missRgb = 0xC0C0C0;  // "Miss" over the target when your attack misses ([CombatLog] ShowYourMisses)
     uint32_t evadeRgb = 0x9FD4FF; // "Evade" over you when an attack on you misses ([CombatLog] ShowOtherMisses)

@@ -92,6 +92,7 @@ struct Text {
     uint32_t fillArgb = 0xFFFFFFFF;      // the game's colour for this text
     bool crit = false;
     bool glancing = false;
+    bool action = false;  // a special attack / perk / taunt name, drawn at ActionScale
     int stackSlot = 0;
     float jitterPx = 0.0f;
     int spreadSlot = 0;    // horizontal start slot: 0, +1, -1, +2, -2 (alternating sides per target)
@@ -178,6 +179,8 @@ struct Spread {
 std::unordered_map<void*, Spread> g_spread; // per target dynel
 
 Pending g_pending;
+
+bool IsActionName(const char* text, int colorIdx); // below, with the other text checks
 std::unordered_map<uint8_t*, Text> g_texts;
 std::vector<Retired> g_retired;
 unsigned g_leaked = 0;
@@ -330,6 +333,7 @@ void Register(uint8_t* self, const char* text)
     // The attack's hit type as the server sent it (AttackInfo +0x30): only auto attacks carry it.
     t.crit = g_pending.active && g_pending.hitType == kHitCritical;
     t.glancing = g_pending.active && g_pending.hitType == kHitGlancing;
+    t.action = g_pending.active && IsActionName(text, g_pending.colorIdx);
 
     // Stack above texts on the same target that are still young.
     if (t.dynel) {
@@ -503,7 +507,7 @@ void Update(uint8_t* self, Text& t)
                      : cfg.popScale + (1.0f - cfg.popScale) * EaseOutCubic(p);
     }
 
-    const float sizePx = cfg.sizePx * (t.crit ? cfg.critScale : (t.glancing ? cfg.glanceScale : 1.0f));
+    const float sizePx = cfg.sizePx * (t.crit ? cfg.critScale : t.glancing ? cfg.glanceScale : t.action ? cfg.actionScale : 1.0f);
     const float alpha = life < cfg.fadeStart ? 1.0f : 1.0f - (life - cfg.fadeStart) / (1.0f - cfg.fadeStart);
     // With horizontal spread doing most of the separation, stacking needs only half a line.
     const float risePx = cfg.risePx * EaseOutCubic(life) + t.stackSlot * sizePx * (cfg.spreadPx > 0.0f ? 0.5f : 1.15f);

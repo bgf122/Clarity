@@ -157,10 +157,11 @@ constexpr int kTargetingScanTimer = 0x0C;
 constexpr float kStackDepthTie = 1.0f; // metres: closer than this counts as the same distance
 constexpr float kStackSwapDepth = 4.0f; // metres: the plate behind must get this much nearer to take the lower spot
 constexpr DWORD kPairForgetMs = 1500;   // an order is forgotten once its two plates stop overlapping this long
-constexpr DWORD kStackHoldMs = 600;     // stacked plates stay stacked this long after they part
-constexpr float kStackKeepPx = 10.0f;   // ... and while they're within this many pixels of each other
+constexpr DWORD kStackHoldMs = 150;     // "stacked" means overlapping (or within the margin) a moment ago
+constexpr float kStackKeepPx = 10.0f;   // stacked plates stay stacked while within this many pixels
+constexpr float kStackMaxPlates = 2.0f; // a plate moves up at most this many plate heights (no towers)
 constexpr float kStackRiseRate = 10.0f; // 1/s: how fast a plate moves up out of the way
-constexpr float kStackFallRate = 3.0f;  // 1/s: how fast it settles back down
+constexpr float kStackFallRate = 6.0f;  // 1/s: how fast it settles back down
 constexpr float kHeadFollow = 2.5f;    // 1/s: how fast the plate follows the head's height (walk bob is ~2-3 Hz)
 constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height is taken at once
 constexpr DWORD kSightEveryMs = 100;   // line-of-sight test interval per plate
@@ -1105,22 +1106,21 @@ int __fastcall Hook_Update(uint8_t* ind)
             auto collide = [&](const RECT& r, float qPriority, const game::Identity& qid) {
                 if (qid.type == p.id.type && qid.instance == p.id.instance)
                     return; // never against another plate of the same character
-                // Plates that are stacked stay stacked while they're within a margin of each other,
-                // and for kStackHoldMs after they part, so characters moving about in a group don't
-                // make their plates jump up and down every time they touch or come apart.
-                const bool held = RecentlyStacked(qid, p.id, now);
-                const float margin = held ? kStackKeepPx : 0.0f;
+                // Plates that are stacked stay stacked while they're within a margin of each other, so
+                // characters moving about in a group don't make their plates jump at every touch.
+                // Once clearly apart they're free (no timed hold: moving the camera changes the
+                // overlaps all the time).
+                const float margin = RecentlyStacked(qid, p.id, now) ? kStackKeepPx : 0.0f;
                 const float bottom = sy - visBelow - targetUp, top = bottom - h;
-                const bool overlapping = !(sx + w2 + margin <= r.left || sx - w2 - margin >= r.right ||
-                                           top - margin >= r.bottom || bottom + margin <= r.top);
-                if (!overlapping && !held)
+                if (sx + w2 + margin <= r.left || sx - w2 - margin >= r.right ||
+                    top - margin >= r.bottom || bottom + margin <= r.top)
                     return;
                 // Farther plates make room for nearer ones, and an order once set is kept while the
                 // two overlap (StackFirst), so it doesn't flip with small camera or NPC moves.
-                if (!StackFirst(qid, p.id, qPriority - priority, now, overlapping))
+                if (!StackFirst(qid, p.id, qPriority - priority, now, true))
                     return;
-                if (!overlapping && bottom <= r.top - gap)
-                    return; // held, and already above it
+                if (bottom <= r.top - gap)
+                    return; // within the margin, but already above it
                 targetUp = sy - visBelow - (static_cast<float>(r.top) - gap);
                 moved = true;
             };
@@ -1136,8 +1136,12 @@ int __fastcall Hook_Update(uint8_t* ind)
             if (!moved)
                 break;
         }
+        // No towers: in a crowd seen from above, plates may overlap a little rather than climb far
+        // away from their characters.
+        targetUp = std::min(targetUp, kStackMaxPlates * h);
     }
-    // Glide instead of jumping: up fairly quickly (names mustn't overlap for long), back down slowly.
+    // Glide instead of jumping: up fairly quickly (names mustn't overlap for long), back down a
+    // little slower.
     const DWORD tick = GetTickCount();
     const float dt = p.stackTick ? std::min(0.1f, (tick - p.stackTick) / 1000.0f) : 1.0f;
     p.stackTick = tick;

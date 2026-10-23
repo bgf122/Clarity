@@ -5,7 +5,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
 ## Features
 - **Floating combat text.**
   - Large, outlined damage and heal numbers that stay the same size on screen at any distance.
-  - Crits pop and shake, and glancing hits are drawn smaller.
+  - Crits pop and shake, and glancing hits are drawn smaller. Special attack, perk and taunt names ("Fling Shot!") are small, about the game's own size.
   - Heals in green, nano in blue; "Miss" when your attack misses and "Evade" when an attack on you misses.
   - Things the game only puts in chat get numbers too: nano you gain, heals and nano you give, health and nano drains.
   - Numbers on you are signed: -damage taken, +heals and gains.

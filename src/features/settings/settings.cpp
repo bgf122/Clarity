@@ -74,6 +74,7 @@ const Item kItems[] = {
     {"CLR_FctCritScale", L"CritScale", "Critical hit size:", F(critScale, 1, 2.5, "%.2fx", 1), "Critical and glancing hits"},
     {"CLR_FctCritShake", L"CritShakePx", "Critical hit shake:", F(critShakePx, 0, 12, "%.0f px", 1), nullptr},
     {"CLR_FctGlanceScale", L"GlanceScale", "Glancing hit size:", F(glanceScale, 0.5, 1, "%.2fx", 1), nullptr},
+    {"CLR_FctActionScale", L"ActionScale", "Special attack / perk name size:", F(actionScale, 0.4, 1, "%.2fx", 1), nullptr},
 
     {"CLR_LogYouHitOther", L"ShowYouHitOther", "You hit other", G, "Combat log categories", 0x07},
     {"CLR_LogYouHitOtherWithNano", L"ShowYouHitOtherWithNano", "You hit other with nano", G, nullptr, 0x04},

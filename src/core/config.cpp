@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -47,6 +48,9 @@ const char kDefaultIni[] =
     "; GlanceScale x\n"
     "CritScale=1.6\n"
     "GlanceScale=0.85\n"
+    "; Special attack, perk and taunt names (\"Fling Shot!\", \"Thunder\") are drawn ActionScale x\n"
+    "; (0.55 is about the game's own size up close)\n"
+    "ActionScale=0.55\n"
     "; 1 = show health drains as heals on yourself\n"
     "DrainHeals=1\n"
     "; Colours of \"Miss\" (your attack missed) and \"Evade\" (an attack on you missed); turn them\n"
@@ -236,6 +240,7 @@ void LoadConfig()
     c.shadowPx = ReadFloat(p, s, L"ShadowPx", d.shadowPx);
     c.critScale = ReadFloat(p, s, L"CritScale", d.critScale);
     c.glanceScale = ReadFloat(p, s, L"GlanceScale", d.glanceScale);
+    c.actionScale = std::clamp(ReadFloat(p, s, L"ActionScale", d.actionScale), 0.3f, 1.5f);
     c.drainHeals = ReadFloat(p, s, L"DrainHeals", d.drainHeals) != 0.0f;
     c.critPop = ReadFloat(p, s, L"CritPop", d.critPop);
     c.critFlashSec = ReadFloat(p, s, L"CritFlashSec", d.critFlashSec);

@@ -10,6 +10,12 @@ uint8_t* FindUnique(const char* module, const char* pattern, const char* what);
 
 bool HooksInit();
 
+// Writes a pointer-sized value into loaded code or data (an import slot, a vtable entry). A page
+// in an executable section keeps its execute right throughout (import tables often share a page
+// with code another thread may be running) and is left executable afterwards, even if another
+// mod changed its protection at the same time. Returns false if the page couldn't be made writable.
+bool WritePointer(void* where, void* value);
+
 // Create + enable an inline hook. Logs and returns false on failure (target left untouched).
 bool InstallHook(const char* what, void* target, void* detour, void** original);
 

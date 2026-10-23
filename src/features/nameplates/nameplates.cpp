@@ -640,12 +640,9 @@ void PatchDelete(uint8_t* ind)
     void** vtable = *reinterpret_cast<void***>(ind);
     if (g_indicatorVtable)
         return;
-    DWORD old;
-    if (!VirtualProtect(vtable, sizeof(void*), PAGE_READWRITE, &old))
-        return;
     g_origDelete = reinterpret_cast<DeleteFn>(vtable[0]);
-    vtable[0] = reinterpret_cast<void*>(&Hook_Delete);
-    VirtualProtect(vtable, sizeof(void*), old, &old);
+    if (!WritePointer(&vtable[0], reinterpret_cast<void*>(&Hook_Delete)))
+        return;
     g_indicatorVtable = vtable;
     Log("[np] Indicator vtable %p: deleting dtor %p hooked", vtable, g_origDelete);
 }

@@ -101,4 +101,49 @@ bool InstallHook(const char* what, void* target, void* detour, void** original)
     return true;
 }
 
+namespace {
+
+constexpr DWORD kExecuteRights = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+
+// Whether an address lies in an executable section of a loaded module, by the module's own
+// section table (not the page's current protection, which another mod may be changing).
+bool InExecutableSection(const void* p)
+{
+    HMODULE mod = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCWSTR>(p), &mod))
+        return false;
+    auto* base = reinterpret_cast<const uint8_t*>(mod);
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const uintptr_t rva = reinterpret_cast<uintptr_t>(p) - reinterpret_cast<uintptr_t>(base);
+    const IMAGE_SECTION_HEADER* s = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++s) {
+        const DWORD size = s->Misc.VirtualSize ? s->Misc.VirtualSize : s->SizeOfRawData;
+        if (rva >= s->VirtualAddress && rva < s->VirtualAddress + size)
+            return (s->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+    }
+    return false;
+}
+
+} // namespace
+
+bool WritePointer(void* where, void* value)
+{
+    const bool exec = InExecutableSection(where);
+    DWORD old = 0;
+    if (!VirtualProtect(where, sizeof(void*), exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE, &old))
+        return false;
+    InterlockedExchangePointer(static_cast<void* volatile*>(where), value);
+    // If another mod had the page writable at the same moment, "old" is its temporary state:
+    // never leave code without its execute right.
+    DWORD restore = old;
+    if (exec && !(restore & kExecuteRights))
+        restore = PAGE_EXECUTE_READ;
+    VirtualProtect(where, sizeof(void*), restore, &old);
+    if (exec)
+        FlushInstructionCache(GetCurrentProcess(), where, sizeof(void*));
+    return true;
+}
+
 } // namespace prk

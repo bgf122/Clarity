@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "../../core/config.h"
+#include "../../core/hooks.h"
 #include "../../core/log.h"
 
 #include <windows.h>
@@ -444,12 +445,9 @@ int PatchImports(HMODULE module)
             }
             if (!hook)
                 continue;
-            DWORD old;
-            if (VirtualProtect(&slots->u1.Function, sizeof(void*), PAGE_READWRITE, &old)) {
-                slots->u1.Function = reinterpret_cast<ULONG_PTR>(hook);
-                VirtualProtect(&slots->u1.Function, sizeof(void*), old, &old);
+            // msvcr100's import table shares a page with its code: keep that page executable.
+            if (WritePointer(&slots->u1.Function, hook))
                 ++patched;
-            }
         }
     }
     return patched;

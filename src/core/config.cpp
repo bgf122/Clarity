@@ -148,8 +148,9 @@ const char kDefaultIni[] =
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
     "FadeInSec=0.25\n"
     "FadeStart=28\n"
-    "; NPCFamily values counted as pets (comma-separated)\n"
-    "PetFamilies=95,96,97,98\n";
+    "; Extra NPCFamily values counted as pets (comma-separated). The known pet families are built in\n"
+    "; (95-98 players' pets, 221 Devileet); see Debug=1 output for a character's NPCFamily.\n"
+    "PetFamilies=\n";
 
 std::wstring IniPath()
 {
@@ -311,9 +312,12 @@ void LoadConfig()
     n.fadeInSec = ReadFloat(p, ns, L"FadeInSec", dn.fadeInSec);
     n.fadeStart = ReadFloat(p, ns, L"FadeStart", dn.fadeStart);
     {
+        // The known pet families always apply; PetFamilies only adds to them (older Clarity.ini
+        // files list the old defaults, which are already in).
+        n.petFamilyCount = dn.petFamilyCount;
+        std::copy(dn.petFamilies, dn.petFamilies + dn.petFamilyCount, n.petFamilies);
         wchar_t list[128];
-        GetPrivateProfileStringW(ns, L"PetFamilies", L"95,96,97,98", list, 128, p);
-        n.petFamilyCount = 0;
+        GetPrivateProfileStringW(ns, L"PetFamilies", L"", list, 128, p);
         for (wchar_t* cur = list; *cur && n.petFamilyCount < 16;) {
             wchar_t* end = nullptr;
             const long v = wcstol(cur, &end, 10);
@@ -321,7 +325,8 @@ void LoadConfig()
                 ++cur;
                 continue;
             }
-            n.petFamilies[n.petFamilyCount++] = static_cast<int>(v);
+            if (std::find(n.petFamilies, n.petFamilies + n.petFamilyCount, static_cast<int>(v)) == n.petFamilies + n.petFamilyCount)
+                n.petFamilies[n.petFamilyCount++] = static_cast<int>(v);
             cur = end;
         }
     }

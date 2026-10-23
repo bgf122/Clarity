@@ -113,8 +113,11 @@ struct NameplateConfig {
     float otherOpacity = 0.9f; // plates other than the selected / fight target
     float fadeInSec = 0.25f;
     float fadeStart = 28.0f;   // metres from you; fully faded at the game's 30 m tag range
-    int petFamilies[16] = {95, 96, 97, 98}; // NPCFamily values that are pets (98: MP pets)
-    int petFamilyCount = 4;
+    // NPCFamily values that are pets: players' pets 95-98 (98: MP pets), 221 the Devileet vanity pet.
+    // Built in; PetFamilies in Clarity.ini adds more. (Draculeet / Frankenleet are NPCs, family 36,
+    // shared with ordinary NPCs.)
+    int petFamilies[16] = {95, 96, 97, 98, 221};
+    int petFamilyCount = 5;
 };
 
 struct Config {

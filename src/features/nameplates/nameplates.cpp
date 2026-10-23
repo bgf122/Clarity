@@ -103,6 +103,7 @@ struct Plate {
     float hitHalfW = 0.0f;
     float visTop = 0.0f, visBottom = 0.0f; // texel rows of the visible content
     RECT screen{};
+    float screenTopFull = 0.0f; // screen.top raised by the bracket room (floating text starts above)
     float depth = 0.0f;
     DWORD screenTick = 0;
     float priority = 0.0f;   // stacking order: lower keeps its place (depth; targets first)
@@ -621,7 +622,7 @@ bool HasValue(int v)
 
 // Pets: the client doesn't get PetMaster/OwnerInstance/PetType for pets (all "no value"/0 in a
 // Debug=1 capture, 2026-10-21); NPCFamily separates them - players' pets were 95/96/97/98, other
-// NPCs 0/36. The list is PetFamilies in Clarity.ini.
+// NPCs 0/36; the Devileet vanity pet is 221. The list is built in (config.h) plus PetFamilies in Clarity.ini.
 Kind Classify(const game::Identity& id)
 {
     const bool npc = n3::IsNpc(id);
@@ -1103,7 +1104,13 @@ int __fastcall Hook_Update(uint8_t* ind)
         const float gap = 1.0f;
         for (int pass = 0; pass < 8; ++pass) {
             bool moved = false;
-            auto collide = [&](const RECT& r, float qPriority, const game::Identity& qid) {
+            // ghost: the footprint of a plate just removed (target change). It only keeps a plate
+            // that was already stacked on it from dropping into the gap; it never starts a new push,
+            // or a new target plate appearing where the old one was would be pushed away and then
+            // drop back.
+            auto collide = [&](const RECT& r, float qPriority, const game::Identity& qid, bool ghost) {
+                if (ghost && !RecentlyStacked(qid, p.id, now))
+                    return;
                 if (qid.type == p.id.type && qid.instance == p.id.instance)
                     return; // never against another plate of the same character
                 // Plates that are stacked stay stacked while they're within a margin of each other, so
@@ -1126,12 +1133,12 @@ int __fastcall Hook_Update(uint8_t* ind)
             };
             for (auto& [qkey, ghost] : g_lastPlate) {
                 if (ghost.hadScreen && now - ghost.tick < kGhostMs)
-                    collide(ghost.screen, ghost.priority, ghost.id);
+                    collide(ghost.screen, ghost.priority, ghost.id, true);
             }
             for (auto& [other, q] : g_plates) {
                 if (other == ind || !q.screenTick || now - q.screenTick > 250)
                     continue;
-                collide(q.screen, q.priority, q.id);
+                collide(q.screen, q.priority, q.id, false);
             }
             if (!moved)
                 break;
@@ -1165,6 +1172,8 @@ int __fastcall Hook_Update(uint8_t* ind)
         p.screen.right = static_cast<LONG>(sx + w2);
         p.screen.bottom = static_cast<LONG>(sy - visBelow - p.stackUp);
         p.screen.top = static_cast<LONG>(sy - visBelow - p.stackUp - h);
+        // ... and the top including the room its (aggro) brackets take above the name.
+        p.screenTopFull = p.screen.top - (p.visTop - static_cast<float>(p.atkY + g_outline)) * pxPerTexel;
         p.depth = view.z;
         p.priority = priority;
         p.screenTick = GetTickCount();
@@ -1240,6 +1249,20 @@ void Tick()
     g_prevWndProc = reinterpret_cast<WNDPROC>(g_unicodeWnd ? SetWindowLongPtrW(hwnd, GWLP_WNDPROC, proc)
                                                            : SetWindowLongPtrA(hwnd, GWLP_WNDPROC, proc));
     Log("[np] click-to-target on window %p (previous wndproc %p)", hwnd, g_prevWndProc);
+}
+
+bool PlateTop(uint32_t type, uint32_t instance, float* top)
+{
+    const DWORD now = GetTickCount();
+    bool found = false;
+    for (auto& [ind, p] : g_plates) {
+        if (p.id.type != type || p.id.instance != instance || !p.screenTick || now - p.screenTick > 250)
+            continue;
+        if (!found || p.screenTopFull < *top)
+            *top = p.screenTopFull;
+        found = true;
+    }
+    return found;
 }
 
 bool Install()

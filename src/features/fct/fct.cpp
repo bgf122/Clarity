@@ -20,6 +20,7 @@
 #include "../../core/n3.h"
 #include "../../core/signatures.h"
 #include "../../core/threat.h"
+#include "../nameplates/nameplates.h"
 
 #include <windows.h>
 
@@ -425,6 +426,7 @@ void Register(uint8_t* self, const char* text)
 
 constexpr float kSelfRadius = 1.5f;  // anchor this close to the camera = our own character in 1st person
 constexpr float kPinnedDepth = 4.0f; // depth the pinned first-person texts are placed at
+constexpr float kAbovePlatePx = 4.0f; // texts start this far above the target's nameplate
 
 void Hide(Text& t)
 {
@@ -478,7 +480,17 @@ void Update(uint8_t* self, Text& t)
     } else if (!game::ViewToScreen(anchorView, &sx, &sy)) {
         Hide(t); // behind the camera
         return;
-    } else if (sy < screenH * cfg.anchorTop) {
+    }
+    // Start above the character's nameplate (with its brackets), not on it: straight up on screen
+    // at the same depth, so the size stays the same.
+    float plateTop = 0.0f;
+    if (std::strcmp(mode, "pinned") != 0 && t.hasId && nameplates::PlateTop(t.id.type, t.id.instance, &plateTop) &&
+        sy > plateTop - kAbovePlatePx) {
+        sy = plateTop - kAbovePlatePx;
+        anchorView = game::ScreenToView(sx, sy, anchorView.z);
+        mode = "above plate";
+    }
+    if (std::strcmp(mode, "pinned") != 0 && sy < screenH * cfg.anchorTop) {
         // Never start above the AnchorTop line: move the start point straight down on screen
         // (same depth, so the size stays the same).
         sy = screenH * cfg.anchorTop;

@@ -335,13 +335,21 @@ CreateFileWFn g_realCreateFileW = nullptr; // for our own temp file, bypassing e
 thread_local bool t_inHook = false;
 std::atomic<unsigned> g_tempCounter{0};
 
+// The options window's root page: OptionPanel\Root.xml, or another root*.xml there - MerkUI with
+// ao-vk points the game at its own OptionPanel\RootRenderer.xml (its Root.xml plus Renderer pages).
+// Overlay only adds the tab to a complete page (one with </root>) that doesn't have it yet.
 bool IsRootXml(std::string path)
 {
     for (char& c : path)
         c = c == '/' ? '\\' : static_cast<char>(tolower(static_cast<unsigned char>(c)));
-    static const char kSuffix[] = "\\optionpanel\\root.xml";
-    const size_t n = sizeof(kSuffix) - 1;
-    return path.size() >= n && path.compare(path.size() - n, n, kSuffix) == 0;
+    static const char kFolder[] = "\\optionpanel\\";
+    const size_t slash = path.rfind('\\');
+    if (slash == std::string::npos || slash + 1 < sizeof(kFolder) - 1)
+        return false;
+    const std::string folder = path.substr(slash + 1 - (sizeof(kFolder) - 1), sizeof(kFolder) - 1);
+    const std::string file = path.substr(slash + 1);
+    return folder == kFolder && file.size() >= 8 && file.compare(0, 4, "root") == 0 &&
+           file.compare(file.size() - 4, 4, ".xml") == 0;
 }
 
 // Reads what the previous layer opened, appends our tab, and returns a temp-file handle with

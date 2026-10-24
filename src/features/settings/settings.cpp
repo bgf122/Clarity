@@ -111,6 +111,7 @@ const Item kItems[] = {
     {"CLR_LogYourPetHitByMonster", L"ShowYourPetHitByMonster", "Your pet hit by monster", G, nullptr, 0x10},
     {"CLR_LogYourPetHitByNano", L"ShowYourPetHitByNano", "Your pet hit by nano", G, nullptr, 0x02},
     {"CLR_LogOtherHitByOther", L"ShowOtherHitByOther", "Other hit by other", G, nullptr, 0x09},
+    {"CLR_LogOtherHitByNano", L"ShowOtherHitByNano", "Other hit by nano (anyone's: the game doesn't say whose)", G, nullptr, 0x03},
     {"CLR_LogYourMisses", L"ShowYourMisses", "Your misses", G, nullptr, 0x11},
     {"CLR_LogOtherMisses", L"ShowOtherMisses", "Other misses", G, nullptr, 0x12},
     {"CLR_LogYouGaveHealth", L"ShowYouGaveHealth", "You gave health", G, nullptr, 0x13},

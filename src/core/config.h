@@ -21,9 +21,8 @@ inline constexpr CombatGroupInfo kCombatGroups[kCombatGroupCount] = {
     {L"MeHitByEnvironment", "Me hit by environment", true},
     {L"MeHitByNano", "Me hit by nano", true},
     {L"YourPetHitByNano", "Your pet hit by nano", true},
-    // Nano damage the server sends without an attacker: unknown source, always hidden (no key, so
-    // it is neither read from Clarity.ini nor offered in the options tab).
-    {L"", "Other hit by nano (unknown source)", false},
+    // Nano damage the server sends without an attacker: anyone's, so it floods in raids. Off by default.
+    {L"OtherHitByNano", "Other hit by nano", false},
     {L"YouHitOtherWithNano", "You hit other with nano", true},
     {L"MeHitByMonster", "Me hit by monster", true},
     {L"MeHitByPlayer", "Me hit by player", true},

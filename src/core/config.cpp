@@ -112,6 +112,8 @@ const char kDefaultIni[] =
     "ShowYouHitOther=1\n"
     "ShowYourPetHitByOther=1\n"
     "ShowOtherHitByOther=0\n"
+    "; Nano damage the game sends without saying whose (everyone's: floods in raids)\n"
+    "ShowOtherHitByNano=0\n"
     "ShowMeGotXP=1\n"
     "ShowMeGotSK=1\n"
     "ShowYourPetHitByMonster=1\n"
@@ -308,7 +310,7 @@ void LoadConfig()
     const bool showOthers = ReadFloat(p, s, L"ShowOthers", 0.0f) != 0.0f;
     for (int i = 0; i < kCombatGroupCount; ++i) {
         if (!kCombatGroups[i].key[0]) {
-            c.showGroup[i] = d.showGroup[i]; // not configurable (e.g. unknown-source nano damage: off)
+            c.showGroup[i] = d.showGroup[i]; // not a combat group
             continue;
         }
         const bool otherGroup = i == 0x09;

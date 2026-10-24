@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cwctype>
 #include <string>
 
 namespace prk {
@@ -138,6 +139,13 @@ const char kDefaultIni[] =
     "; Org / title line\n"
     "ShowOrg=1\n"
     "ShowHealth=1\n"
+    "; Health bar and level colour: 0 = classic (the game's consider colours: grey, green, yellow, red by level\n"
+    "; difference), 1 = one colour for all, BarHue (0-360: 0 red, 60 yellow, 120 green, 180 cyan, 240 blue,\n"
+    "; 300 magenta), 2 = by health (green at full health, through yellow, to red near death)\n"
+    "BarColor=0\n"
+    "BarHue=0\n"
+    "; Brightness of those colours (0.3-1, 1 = the pure colours)\n"
+    "BarBrightness=0.9\n"
     "; Font and weight (100-900, 400 = regular, 700 = bold). Applied at game start.\n"
     "Font=Verdana\n"
     "FontWeight=400\n"
@@ -156,7 +164,47 @@ const char kDefaultIni[] =
     "FadeStart=28\n"
     "; Extra NPCFamily values counted as pets (comma-separated). The known pet families are built in\n"
     "; (95-98 players' pets, 221 Devileet); see Debug=1 output for a character's NPCFamily.\n"
-    "PetFamilies=\n";
+    "PetFamilies=\n"
+    "\n"
+    "[Interface]\n"
+    "; Key that hides the game's interface (windows, chat, bars) and shows it again; nameplates and\n"
+    "; floating text stay. Ctrl, Shift, Alt and a letter, digit or F1-F12, e.g. Ctrl+Shift+U. Empty = no key.\n"
+    "HideUiKey=Ctrl+Shift+U\n";
+
+// "Ctrl+Shift+U", "Alt+F12", "Ctrl+7": modifiers and one key; vk 0 if not understood.
+Hotkey ParseHotkey(const wchar_t* text)
+{
+    Hotkey k;
+    std::wstring s(text);
+    size_t start = 0;
+    while (start <= s.size()) {
+        size_t end = s.find(L'+', start);
+        if (end == std::wstring::npos)
+            end = s.size();
+        std::wstring part = s.substr(start, end - start);
+        part.erase(0, part.find_first_not_of(L" \t"));
+        part.erase(part.find_last_not_of(L" \t") + 1);
+        for (wchar_t& ch : part)
+            ch = static_cast<wchar_t>(towupper(ch));
+        if (part == L"CTRL" || part == L"CONTROL") {
+            k.ctrl = true;
+        } else if (part == L"SHIFT") {
+            k.shift = true;
+        } else if (part == L"ALT") {
+            k.alt = true;
+        } else if (part.size() == 1 && ((part[0] >= L'A' && part[0] <= L'Z') || (part[0] >= L'0' && part[0] <= L'9'))) {
+            k.vk = part[0];
+        } else if (part.size() >= 2 && part[0] == L'F') {
+            const int n = _wtoi(part.c_str() + 1);
+            if (n >= 1 && n <= 12)
+                k.vk = VK_F1 + n - 1;
+        } else if (!part.empty()) {
+            return {};
+        }
+        start = end + 1;
+    }
+    return k;
+}
 
 std::wstring IniPath()
 {
@@ -311,6 +359,9 @@ void LoadConfig()
     n.showLevel = ReadFloat(p, ns, L"ShowLevel", dn.showLevel) != 0.0f;
     n.showOrg = ReadFloat(p, ns, L"ShowOrg", dn.showOrg) != 0.0f;
     n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
+    n.barColor = std::clamp(static_cast<int>(ReadFloat(p, ns, L"BarColor", static_cast<float>(dn.barColor))), 0, 2);
+    n.barHue = std::clamp(ReadFloat(p, ns, L"BarHue", dn.barHue), 0.0f, 360.0f);
+    n.barBrightness = std::clamp(ReadFloat(p, ns, L"BarBrightness", dn.barBrightness), 0.3f, 1.0f);
     GetPrivateProfileStringW(ns, L"Font", dn.fontName, n.fontName, 64, p);
     n.fontWeight = static_cast<int>(ReadFloat(p, ns, L"FontWeight", static_cast<float>(dn.fontWeight)));
     n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
@@ -338,6 +389,15 @@ void LoadConfig()
                 n.petFamilies[n.petFamilyCount++] = static_cast<int>(v);
             cur = end;
         }
+    }
+
+    {
+        InterfaceConfig& ui = g_bufs[next].ui;
+        wchar_t key[64];
+        GetPrivateProfileStringW(L"Interface", L"HideUiKey", L"Ctrl+Shift+U", key, 64, p);
+        ui.hideUi = ParseHotkey(key);
+        if (key[0] && !ui.hideUi.vk)
+            Log("[cfg] HideUiKey '%ls' not understood - no key", key);
     }
 
     g_cur.store(next, std::memory_order_release);

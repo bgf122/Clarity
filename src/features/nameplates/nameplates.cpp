@@ -16,6 +16,7 @@
 #include "../../core/signatures.h"
 #include "../../core/text_raster.h"
 #include "../../core/threat.h"
+#include "../hideui/hideui.h"
 
 #include <windows.h>
 
@@ -620,19 +621,61 @@ int HealthTenths(const game::Identity& id)
     return std::clamp(static_cast<int>(1000.0 * std::min(hp, life) / life), 0, 1000);
 }
 
-// Current bar state for the plate; returns false if nothing needs redrawing. Targets the game
-// can't consider (e.g. other players) get its grey.
-// The bar's health and consider colour. The colour is also the level's, so it's worked out for
-// plates without a bar too (health switched off).
+// A fully saturated colour of the given hue (degrees).
+uint32_t HueRgb(float hue)
+{
+    const float h = std::fmod(std::max(0.0f, hue), 360.0f) / 60.0f;
+    const float x = 1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f);
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    switch (static_cast<int>(h)) {
+    case 0: r = 1.0f; g = x; break;
+    case 1: r = x; g = 1.0f; break;
+    case 2: g = 1.0f; b = x; break;
+    case 3: g = x; b = 1.0f; break;
+    case 4: r = x; b = 1.0f; break;
+    default: r = 1.0f; b = x; break;
+    }
+    auto ch = [](float v) { return static_cast<uint32_t>(v * 255.0f + 0.5f); };
+    return (ch(r) << 16) | (ch(g) << 8) | ch(b);
+}
+
+// Bar colours darker (BarBrightness) and a little less saturated than the pure ones, easier on the eye.
+constexpr float kBarDesaturate = 0.2f;
+uint32_t Soften(uint32_t rgb)
+{
+    const float brightness = std::clamp(Cfg().np.barBrightness, 0.3f, 1.0f);
+    const float r = ((rgb >> 16) & 0xFF) / 255.0f, g = ((rgb >> 8) & 0xFF) / 255.0f, b = (rgb & 0xFF) / 255.0f;
+    const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
+    auto ch = [&](float c) {
+        const float v = (c + (lum - c) * kBarDesaturate) * brightness;
+        return static_cast<uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+    return (ch(r) << 16) | (ch(g) << 8) | ch(b);
+}
+
+// Current bar state for the plate; returns false if nothing needs redrawing. The colour is also the
+// level's, so it's worked out for plates without a bar too (health switched off).
 bool BarChanged(const Plate& p, const game::Identity& id, int* tenths, uint32_t* rgb)
 {
     if (p.barY < 0 && p.level.empty())
         return false;
-    bool considerable = false;
-    *rgb = ConsiderRgb(id, &considerable);
-    if (!considerable)
-        *rgb = 0xAAAAAA;
+    // Classic: the game's consider colours (by level difference, grey for those it can't rate). Or one
+    // colour for everyone, or by health: green at full health, yellow at half, red at none.
+    const NameplateConfig& cfg = Cfg().np;
     *tenths = p.barY >= 0 ? HealthTenths(id) : -1;
+    if (cfg.barColor == 1) {
+        *rgb = HueRgb(cfg.barHue);
+    } else if (cfg.barColor == 2) {
+        const int health = *tenths >= 0 ? *tenths : HealthTenths(id);
+        *rgb = HueRgb(120.0f * std::clamp(health, 0, 1000) / 1000.0f);
+    } else {
+        bool considerable = false;
+        *rgb = ConsiderRgb(id, &considerable);
+        if (!considerable)
+            *rgb = 0xAAAAAA; // the game's grey for those it can't rate (e.g. other players), as it is
+    }
+    if (*rgb != 0xAAAAAA)
+        *rgb = Soften(*rgb);
     return *tenths != p.hpPct || *rgb != p.barRgb;
 }
 
@@ -1272,6 +1315,7 @@ uint8_t* PlateAt(int x, int y)
 
 LRESULT CALLBACK ClickWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    hideui::HandleMessage(msg, wp, lp); // (the key still reaches the game)
     const NameplateConfig& cfg = Cfg().np;
     if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) && cfg.enable && cfg.clickToTarget &&
         GetCurrentThreadId() == g_gameThread && g_setTarget && !(wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL))) {

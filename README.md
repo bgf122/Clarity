@@ -12,10 +12,11 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Several hits on one target start side by side and rise straight up from where they happened.
   - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
-  - Readable plates over players, NPCs and pets: the full name centred over a health bar that stretches with it, the level in bold to the left in the bar's consider colour, and an org/title line, on a faint dark background (adjustable) so they stand out against bright scenery.
+  - Readable plates over players, NPCs and pets: the full name centred over a health bar that stretches with it, the level in bold to the left in the bar's colour (classic level colours, one colour of your choice, or by health), and an org/title line, on a faint dark background (adjustable) so they stand out against bright scenery.
   - Your selected (nano) target and your fight target get bold brackets (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range.
   - Optionally a plate over your own character (hidden in first person).
   - Characters attacking you get slowly blinking red brackets.
+  - Ctrl+Shift+U hides the game's interface (windows, chat, bars) and keeps the nameplates and combat text, e.g. for screenshots. The key is set in Clarity.ini (`[Interface] HideUiKey`).
   - Overlapping plates are moved apart calmly and keep their order, they don't bob with walking, and you can click a plate to select that character.
   - Like the game's own tags, plates are hidden behind walls and terrain, but not behind other characters.
   - Switch players, NPCs or pets off to get the game's own tags for them.

@@ -6,7 +6,9 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -32,13 +34,16 @@ struct Item {
     double scale;
     const char* section;   // heading printed before this item, or nullptr
     int group = -1;        // combat-log category index (kCombatGroups), instead of a field
+    const char* const* choices = nullptr; // radio buttons (values 0, 1, ...), null-terminated labels ...
+    int NameplateConfig::*npInt = nullptr; // ... for this field
 
     const wchar_t* IniSection() const
     {
         if (group >= 0)
             return L"CombatLog";
-        return npBool || npFloat ? L"Nameplates" : L"FloatingText";
+        return Nameplates() ? L"Nameplates" : L"FloatingText";
     }
+    bool Nameplates() const { return npBool || npFloat || npInt; }
     double Current() const
     {
         const Config& c = Cfg();
@@ -50,7 +55,24 @@ struct Item {
             return c.fct.*floatField;
         if (npBool)
             return c.np.*npBool ? 1.0 : 0.0;
+        if (npInt)
+            return c.np.*npInt;
         return c.np.*npFloat;
+    }
+    double Default() const
+    {
+        static const Config d{};
+        if (group >= 0)
+            return kCombatGroups[group].show ? 1.0 : 0.0;
+        if (boolField)
+            return d.fct.*boolField ? 1.0 : 0.0;
+        if (floatField)
+            return d.fct.*floatField;
+        if (npBool)
+            return d.np.*npBool ? 1.0 : 0.0;
+        if (npInt)
+            return d.np.*npInt;
+        return d.np.*npFloat;
     }
 };
 
@@ -59,6 +81,9 @@ struct Item {
 #define NB(field) true, nullptr, nullptr, &NameplateConfig::field, nullptr, 0, 1, nullptr, 1
 #define NF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, &NameplateConfig::field, lo, hi, fmt, scale
 #define G true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1
+#define NR false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1 // radio buttons: choices + npInt follow
+
+const char* const kBarColors[] = {"Classic (by level)", "Single colour", "By health", nullptr};
 
 const Item kItems[] = {
     {"CLR_FctEnable", L"Enable", "Improved floating combat text (off = the game's original)", B(enable), "Floating combat text"},
@@ -113,6 +138,9 @@ const Item kItems[] = {
     {"CLR_NpShowLevel", L"ShowLevel", "Show level", NB(showLevel), nullptr},
     {"CLR_NpShowOrg", L"ShowOrg", "Show title and organization", NB(showOrg), nullptr},
     {"CLR_NpShowHealth", L"ShowHealth", "Show health bar", NB(showHealth), nullptr},
+    {"CLR_NpBarColor", L"BarColor", "Health bar colour:", NR, nullptr, -1, kBarColors, &NameplateConfig::barColor},
+    {"CLR_NpBarHue", L"BarHue", "Single colour (hue):", NF(barHue, 0, 360, "%.0f", 1), nullptr},
+    {"CLR_NpBarBrightness", L"BarBrightness", "Health bar colour brightness:", NF(barBrightness, 0.3, 1, "%.0f%%", 100), nullptr},
     {"CLR_NpShowPlayers", L"ShowPlayers", "Nameplates for players", NB(showPlayers), nullptr},
     {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
@@ -125,10 +153,20 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef NB
 #undef NF
 #undef G
+#undef NR
 
 // Latest value per item from the GUI, written to the INI by Flush() on the init thread.
 std::atomic<bool> g_dirty[kItemCount];
 std::atomic<double> g_value[kItemCount];
+
+// "Settings: Default / Custom" at the top of each page (0 floating text, 1 nameplates). Choosing Default
+// puts the page's settings back to their defaults; changing any of them switches it to Custom.
+constexpr int kPresetDefault = 0, kPresetCustom = 1;
+const char* const kPresetVars[2] = {"CLR_PresetFct", "CLR_PresetNp"};
+const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
+std::atomic<bool> g_resetPage[2];  // Default chosen: Flush() resets the page
+std::atomic<bool> g_customPage[2]; // a setting changed: Flush() shows Custom
+thread_local bool t_resetting = false; // Flush() is setting the defaults (not a user change)
 
 // --- Utils.dll (DistributedValue) -----------------------------------------------------------
 
@@ -136,6 +174,7 @@ using StringCtorFn = void*(__thiscall*)(void* self, const char* s);
 using StringDtorFn = void(__thiscall*)(void* self);
 using StringCStrFn = const char*(__thiscall*)(const void* self);
 using VariantDoubleFn = void*(__thiscall*)(void* self, double v);
+using VariantIntFn = void*(__thiscall*)(void* self, int v);
 using VariantBoolFn = void*(__thiscall*)(void* self, bool v);
 using VariantDtorFn = void(__thiscall*)(void* self);
 using VariantGetTypeFn = int(__thiscall*)(const void* self);
@@ -145,11 +184,13 @@ using AddVariableNodeFn = void(__cdecl*)(const void* node, bool overwrite, bool 
 using DValueCtorFn = void*(__thiscall*)(void* self, const void* name);
 using ObserveFn = void(__thiscall*)(void* self, const void* name);
 using CrtNewFn = void*(__cdecl*)(size_t);
+using SetDValueFn = void(__cdecl*)(const void* name, const void* value);
 
 StringCtorFn StringCtor;
 StringDtorFn StringDtor;
 StringCStrFn StringCStr;
 VariantDoubleFn VariantDouble;
+VariantIntFn VariantInt;
 VariantBoolFn VariantBool;
 VariantDtorFn VariantDtor;
 VariantGetTypeFn VariantGetType;
@@ -159,6 +200,7 @@ AddVariableNodeFn AddVariableNode;
 DValueCtorFn DValueCtor;
 ObserveFn Observe;
 CrtNewFn CrtNew;
+SetDValueFn SetDValue;
 
 // ValueNode_c (0x70 bytes): String name +0, Variant value +0x20, persist +0x30, hasMin +0x31,
 // hasMax +0x32, Variant min +0x38, max +0x48, category +0x58, observer vector +0x5C.
@@ -184,6 +226,7 @@ bool ResolveAll()
     ok &= Resolve(StringDtor, "Utils.dll", "??1String@@QAE@XZ");
     ok &= Resolve(StringCStr, "Utils.dll", "?c_str@String@@QBEPBDXZ");
     ok &= Resolve(VariantDouble, "Utils.dll", "??0Variant@@QAE@N@Z");
+    ok &= Resolve(VariantInt, "Utils.dll", "??0Variant@@QAE@H@Z");
     ok &= Resolve(VariantBool, "Utils.dll", "??0Variant@@QAE@_N@Z");
     ok &= Resolve(VariantDtor, "Utils.dll", "??1Variant@@QAE@XZ");
     ok &= Resolve(VariantGetType, "Utils.dll", "?GetType@Variant@@QBE?AW4type_code@@XZ");
@@ -193,6 +236,7 @@ bool ResolveAll()
     ok &= Resolve(DValueCtor, "Utils.dll", "??0DistributedValue_c@@QAE@ABVString@@@Z");
     ok &= Resolve(Observe, "Utils.dll", "?Observe@DistributedValue_c@@QAEXABVString@@@Z");
     ok &= Resolve(CrtNew, "msvcr100.dll", "??2@YAPAXI@Z");
+    ok &= Resolve(SetDValue, "Utils.dll", "?SetDValue@DistributedValue_c@@SAXABVString@@ABVVariant@@@Z");
     return ok;
 }
 
@@ -200,8 +244,11 @@ void Register(const Item& item, double value)
 {
     alignas(8) uint8_t node[kValueNodeSize] = {};
     StringCtor(node, item.var);
+    const bool ranged = !item.isBool && !item.choices;
     if (item.isBool) {
         VariantBool(node + 0x20, value != 0.0);
+    } else if (item.choices) {
+        VariantInt(node + 0x20, static_cast<int>(value)); // radio buttons hold ints
     } else {
         VariantDouble(node + 0x20, value);
         VariantDouble(node + 0x38, item.min);
@@ -211,12 +258,53 @@ void Register(const Item& item, double value)
     }
     node[0x30] = 0; // persist: Clarity.ini is the store
     AddVariableNode(node, true, true);
-    if (!item.isBool) {
+    if (ranged) {
         VariantDtor(node + 0x48);
         VariantDtor(node + 0x38);
     }
     VariantDtor(node + 0x20);
     StringDtor(node);
+}
+
+// Whether every setting on the page is at its default (ini values are saved with 3 significant digits).
+bool PageAtDefaults(bool nameplates)
+{
+    for (const Item& item : kItems) {
+        if (item.Nameplates() != nameplates)
+            continue;
+        const double d = item.Default();
+        if (std::fabs(item.Current() - d) > 1e-3 * std::max(1.0, std::fabs(d)))
+            return false;
+    }
+    return true;
+}
+
+void RegisterPreset(const char* var, int value)
+{
+    alignas(8) uint8_t node[kValueNodeSize] = {};
+    StringCtor(node, var);
+    VariantInt(node + 0x20, value);
+    node[0x30] = 0; // not saved: worked out from the settings at start
+    AddVariableNode(node, true, true);
+    VariantDtor(node + 0x20);
+    StringDtor(node);
+}
+
+// Sets a DValue as the options window would (its controls and our observer follow).
+void SetValue(const char* var, double value, bool isBool, bool isInt)
+{
+    alignas(8) uint8_t name[kStringSize] = {};
+    alignas(8) uint8_t variant[0x10] = {};
+    StringCtor(name, var);
+    if (isBool)
+        VariantBool(variant, value != 0.0);
+    else if (isInt)
+        VariantInt(variant, static_cast<int>(value + 0.5));
+    else
+        VariantDouble(variant, value);
+    SetDValue(name, variant);
+    VariantDtor(variant);
+    StringDtor(name);
 }
 
 // --- change observer --------------------------------------------------------------------------
@@ -228,11 +316,20 @@ void __fastcall OnDValueChanged(void* /*self*/, void* /*edx*/, const void* name,
     const char* n = StringCStr(name);
     if (!n || strncmp(n, "CLR_", 4) != 0)
         return;
+    for (int page = 0; page < 2; ++page) {
+        if (strcmp(n, kPresetVars[page]) == 0) {
+            if (!t_resetting && static_cast<int>(VariantAsDouble(value) + 0.5) == kPresetDefault)
+                g_resetPage[page].store(true); // handled by Flush(), outside the DValue lock
+            return;
+        }
+    }
     for (int i = 0; i < kItemCount; ++i) {
         if (strcmp(n, kItems[i].var) == 0) {
             const double v = VariantGetType(value) == kVariantBool ? (VariantAsBool(value) ? 1.0 : 0.0) : VariantAsDouble(value);
             g_value[i].store(v);
             g_dirty[i].store(true);
+            if (!t_resetting)
+                g_customPage[kItems[i].Nameplates() ? 1 : 0].store(true);
             return;
         }
     }
@@ -264,6 +361,12 @@ bool CreateObserver()
         Observe(obj, name);
         StringDtor(name);
     }
+    for (const char* var : kPresetVars) {
+        alignas(8) uint8_t name[kStringSize] = {};
+        StringCtor(name, var);
+        Observe(obj, name);
+        StringDtor(name);
+    }
     return true;
 }
 
@@ -284,16 +387,45 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, bool n
          "        <TextView value=\"Clarity: ";
     x += page;
     x += "\" font=\"HUGE\" layout_borders=\"Rect(0,0,0,5)\" />\r\n"
-         "        <TextView value=\"Changes apply at once. Settings are saved to Clarity.ini (fonts and colours are set there).\" font=\"LARGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n";
+         "        <TextView value=\"Changes apply at once. Settings are saved to Clarity.ini (fonts and colours are set there).\" font=\"LARGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n"
+         "        <OptionRadioButtonGroup label=\"Settings:\" layout_borders=\"Rect(10,0,0,5)\" opt_type=\"variant\" opt_variable=\"";
+    x += kPresetVars[nameplates ? 1 : 0];
+    x += "\">\r\n";
+    for (int c = 0; kPresetChoices[c]; ++c) {
+        char value[16];
+        sprintf_s(value, "%d", c);
+        x += "          <RadioButton label=\"";
+        x += kPresetChoices[c];
+        x += "\" value=\"";
+        x += value;
+        x += "\"/>\r\n";
+    }
+    x += "        </OptionRadioButtonGroup>\r\n";
     for (const Item& item : kItems) {
-        if ((item.npBool || item.npFloat) != nameplates)
+        if (item.Nameplates() != nameplates)
             continue;
         if (item.section && !nameplates) {
             x += "        <TextView value=\"";
             x += item.section;
             x += "\" font=\"LARGE\" layout_borders=\"Rect(0,10,0,3)\" />\r\n";
         }
-        if (item.isBool) {
+        if (item.choices) {
+            x += "        <OptionRadioButtonGroup label=\"";
+            x += item.label;
+            x += "\" layout_borders=\"Rect(10,3,0,3)\" opt_type=\"variant\" opt_variable=\"";
+            x += item.var;
+            x += "\">\r\n";
+            for (int c = 0; item.choices[c]; ++c) {
+                char value[16];
+                sprintf_s(value, "%d", c);
+                x += "          <RadioButton label=\"";
+                x += item.choices[c];
+                x += "\" value=\"";
+                x += value;
+                x += "\"/>\r\n";
+            }
+            x += "        </OptionRadioButtonGroup>\r\n";
+        } else if (item.isBool) {
             x += "        <OptionCheckBox label=\"";
             x += item.label;
             x += "\" layout_borders=\"Rect(10,0,0,0)\" opt_type=\"variant\" opt_variable=\"";
@@ -475,6 +607,8 @@ bool Install()
 
     for (const Item& item : kItems)
         Register(item, item.Current());
+    for (int page = 0; page < 2; ++page)
+        RegisterPreset(kPresetVars[page], PageAtDefaults(page == 1) ? kPresetDefault : kPresetCustom);
     if (!CreateObserver()) {
         Log("[settings] observer creation failed - options tab disabled");
         return false;
@@ -491,6 +625,29 @@ bool Install()
 
 void Flush()
 {
+    // Default chosen: each setting on the page back to its default through its DValue, so the window
+    // shows it and the observer queues it for Clarity.ini below.
+    for (int page = 0; page < 2; ++page) {
+        if (!g_resetPage[page].exchange(false))
+            continue;
+        t_resetting = true;
+        for (const Item& item : kItems) {
+            if (item.Nameplates() == (page == 1))
+                SetValue(item.var, item.Default(), item.isBool, item.choices != nullptr);
+        }
+        t_resetting = false;
+        g_customPage[page].store(false);
+        Log("[settings] %s reset to defaults", page == 1 ? "nameplates" : "floating text");
+    }
+    // A setting changed by hand: the page is Custom now.
+    for (int page = 0; page < 2; ++page) {
+        if (g_customPage[page].exchange(false)) {
+            t_resetting = true; // (not a choice of Default either way)
+            SetValue(kPresetVars[page], kPresetCustom, false, true);
+            t_resetting = false;
+        }
+    }
+
     bool any = false;
     for (int i = 0; i < kItemCount; ++i) {
         if (!g_dirty[i].exchange(false))
@@ -500,6 +657,8 @@ void Flush()
         wchar_t text[32];
         if (item.isBool)
             swprintf_s(text, L"%d", v != 0.0 ? 1 : 0);
+        else if (item.choices)
+            swprintf_s(text, L"%d", static_cast<int>(v + 0.5));
         else
             swprintf_s(text, L"%.3g", v);
         WritePrivateProfileStringW(item.IniSection(), item.key, text, ConfigPath().c_str());

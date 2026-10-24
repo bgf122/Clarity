@@ -107,6 +107,10 @@ struct NameplateConfig {
     bool showLevel = true;
     bool showOrg = true;       // org / title line
     bool showHealth = true;
+    int barColor = 0;          // health bar and level colour: 0 classic (the game's consider colours by level
+                               // difference), 1 one colour (barHue), 2 by health (green -> yellow -> red)
+    float barHue = 0.0f;       // hue for barColor 1, degrees: 0 red, 120 green, 240 blue
+    float barBrightness = 0.9f;  // health bar and level colours this bright (1 = the pure colours)
     wchar_t fontName[64] = L"Verdana"; // the GUI's TrueType face; read at game start
     int fontWeight = 400;
     bool clickToTarget = true; // left-click a plate to select that character
@@ -123,9 +127,20 @@ struct NameplateConfig {
     int petFamilyCount = 5;
 };
 
+// A key with modifiers; vk 0 = none.
+struct Hotkey {
+    unsigned vk = 0;
+    bool ctrl = false, shift = false, alt = false;
+};
+
+struct InterfaceConfig {
+    Hotkey hideUi; // hides the game's interface and shows it again ([Interface] HideUiKey)
+};
+
 struct Config {
     FctConfig fct;
     NameplateConfig np;
+    InterfaceConfig ui;
 };
 
 // Current settings. Written only by LoadConfig (init thread); read by the game thread.

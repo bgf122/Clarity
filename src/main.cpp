@@ -5,6 +5,7 @@
 #include "core/hooks.h"
 #include "core/log.h"
 #include "features/fct/fct.h"
+#include "features/hideui/hideui.h"
 #include "features/nameplates/nameplates.h"
 #include "features/settings/settings.h"
 #include "version.h"
@@ -55,6 +56,7 @@ DWORD WINAPI InitThread(void*)
     if (prk::HooksInit() && prk::game::Init()) {
         prk::fct::Install();
         prk::nameplates::Install();
+        prk::hideui::Install();
         prk::settings::Install();
     } else {
         prk::Log("init failed - no features enabled");

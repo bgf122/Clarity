@@ -70,6 +70,13 @@ int S(int v)
 int g_outline = 2, g_shadowOffset = 2, g_shadowBlur = 2;
 int g_barW = 340, g_barH = 38, g_barBorder = 2; // bar wider than most names (the user's reference)
 constexpr uint32_t kTypeCharacter = 50000;
+constexpr int kStatPvpFlags = 224;   // 0xE0: bits 0x4000001 = flagged for PvP ("** name **")
+constexpr int kStatNameMarks = 673;  // 0x2A1: bit 9 = "= name =" (as the game's tag builder)
+constexpr int kStyleClassic = 1; // NameplateConfig::style
+// Classic puts the name where the game's tag has it. The game's tag is a 32-texel-tall texture
+// centred on the anchor, its name printed from row 1 (12 px font: capitals' middle near row 8.5),
+// so the name's middle is this fraction of the quad's half height above the anchor.
+constexpr float kClassicNameRise = 1.0f - 2.0f * 8.5f / 32.0f;
 
 enum class Kind { Player, Npc, Pet, Self };
 // Which Indicator: the 2 s nametag scan's, the selected target's (frame + bar) or the fight target's.
@@ -85,8 +92,11 @@ struct Plate {
     std::vector<uint32_t> text; // ARGB without the health bar
     float nameCap = 30.0f;      // texels, what MinPx/MaxPx refer to
     int anchorRow = kTexH;      // texel row placed at the game's anchor (above the head)
+    float nameMidRow = 0.0f;    // Classic: texel row of the middle of the name's capitals
     int barY = -1;              // -1 = no bar
     int barW = 0;               // texels: g_barW, or wider to span a long name
+    int barH = 0, barBorder = 0; // texels
+    bool barLabel = true;       // health percentage inside the bar (Modern)
     std::wstring level;         // drawn by Upload in the bar's colour; empty = none
     float levelX = 0.0f, levelY = 0.0f;
     // "Attacking you" marker: a soft red ring around level, name and bar, blurred once per layout.
@@ -176,7 +186,7 @@ constexpr float kEdgeMarginPx = 8.0f;     // target plates kept this far inside 
 constexpr float kFirstPersonRadius = 1.5f; // your own plate's anchor this close to the camera = first person
 constexpr int kBlinkSteps = 6;         // painted strengths (each change re-uploads the texture)
 constexpr float kBlinkLow = 0.25f;     // faintest strength
-raster::Font g_nameFont, g_smallFont, g_pctFont, g_levelFont;
+raster::Font g_nameFont, g_smallFont, g_pctFont, g_levelFont, g_classicFont;
 bool g_fontsTried = false;
 bool g_fontsOk = false;
 bool g_buildFailed = false; // stop retrying after a texture/font failure
@@ -329,6 +339,89 @@ uint32_t NameRgb(const game::Identity& id, uint8_t* ind)
     return code ? n3::ColorOf(code) : Field<uint32_t>(ind, kIndTextRgb) & 0xFFFFFF;
 }
 
+// A piece of a name in one colour.
+struct TextRun {
+    std::wstring text;
+    uint32_t rgb;
+};
+
+// The name as the game's tag shows it (GUI 0x10024E14): the title first ("Title ** Name **");
+// colour codes inside the name (byte 0x10, then the colour code, e.g. a pet named
+// "\x10\x18DEADLY \x10\x10TOASTER") switch the colour for the rest of it; a player flagged for PvP
+// (stat 224 bits 0x4000001) gets "** name **", one with stat 673 bit 9 "= name =". Other control
+// bytes are dropped.
+std::vector<TextRun> NameRuns(const game::Identity& id, uint8_t* ind)
+{
+    const uint32_t base = NameRgb(id, ind);
+    std::string before, after;
+    if (Cfg().np.showOrg) {
+        const std::string title = n3::Title(id);
+        if (!title.empty())
+            before = title + " ";
+    }
+    if (id.type == kTypeCharacter && !n3::IsNpc(id)) {
+        const int pvp = n3::GetSkill(id, kStatPvpFlags);
+        const int marks = n3::GetSkill(id, kStatNameMarks);
+        if (pvp != n3::kNoValue && (static_cast<uint32_t>(pvp) & 0x4000001) != 0) {
+            before += "** ";
+            after = " **";
+        } else if (marks != n3::kNoValue && ((static_cast<uint32_t>(marks) >> 9) & 1) != 0) {
+            before += "= ";
+            after = " =";
+        }
+    }
+    std::vector<TextRun> runs;
+    uint32_t rgb = base;
+    std::string cur = before;
+    auto flush = [&] {
+        if (!cur.empty())
+            runs.push_back({Widen(cur), rgb});
+        cur.clear();
+    };
+    const std::string raw = n3::Name(id);
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(raw[i]);
+        if (ch == 0x10 && i + 1 < raw.size()) {
+            flush();
+            rgb = n3::ColorOf(static_cast<unsigned char>(raw[++i]));
+        } else if (ch >= 0x20) {
+            cur += raw[i];
+        }
+    }
+    flush();
+    rgb = base;
+    cur = after;
+    flush();
+    return runs;
+}
+
+float RunsWidth(const raster::Font& font, const std::vector<TextRun>& runs)
+{
+    float w = 0.0f;
+    for (const TextRun& r : runs)
+        w += font.TextWidth(r.text.c_str(), static_cast<int>(r.text.size()));
+    return w;
+}
+
+// Too wide: the whole name in its first colour, shortened with an ellipsis.
+std::vector<TextRun> FitRuns(const raster::Font& font, std::vector<TextRun> runs, float maxW)
+{
+    if (runs.empty() || RunsWidth(font, runs) <= maxW)
+        return runs;
+    std::wstring all;
+    for (const TextRun& r : runs)
+        all += r.text;
+    return {{Fit(font, all, maxW), runs.front().rgb}};
+}
+
+void DrawRuns(Canvas& c, const raster::Font& font, const std::vector<TextRun>& runs, float x, float y)
+{
+    for (const TextRun& r : runs) {
+        DrawText(c, font, r.text, x, y, r.rgb);
+        x += font.TextWidth(r.text.c_str(), static_cast<int>(r.text.size()));
+    }
+}
+
 bool EnsureFonts()
 {
     if (!g_fontsTried) {
@@ -345,7 +438,8 @@ bool EnsureFonts()
         g_fontsOk = g_nameFont.Create(np.fontName, S(40), np.fontWeight) &&
                     g_smallFont.Create(np.fontName, S(28), np.fontWeight) &&
                     g_pctFont.Create(np.fontName, S(30), np.fontWeight) &&
-                    g_levelFont.Create(np.fontName, S(44), std::max(np.fontWeight, 700)); // the level in bold
+                    g_levelFont.Create(np.fontName, S(44), std::max(np.fontWeight, 700)) && // the level in bold
+                    g_classicFont.Create(np.fontName, S(40), std::max(np.fontWeight, 700)); // Classic: the game's bold names
         Log("[np] text drawn at %.2fx (name %d px for MaxPx %.0f)", g_scale, S(40), np.maxPx);
         if (!g_fontsOk)
             Log("[np] font creation failed - nameplates unchanged");
@@ -356,17 +450,156 @@ bool EnsureFonts()
 void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb);
 void Composite(std::vector<uint32_t>& px, const Canvas& c);
 
-// Layout: the name centred over the health bar (percentage inside), the level larger to the left of
-// both and vertically centred on them, and the org/title line below.
+// Fills a rectangle (texels) of a mask whose (0, 0) is texel (ox, oy).
+void MaskRect(raster::Mask& mask, int ox, int oy, int x, int y, int w, int h)
+{
+    for (int j = std::max(0, y - oy); j < std::min(mask.h, y - oy + h); ++j)
+        for (int i = std::max(0, x - ox); i < std::min(mask.w, x - ox + w); ++i)
+            mask.a[static_cast<size_t>(j) * mask.w + i] = 1.0f;
+}
+
+// Corner brackets of a box into a mask whose (0, 0) is texel (ox, oy). Arms along the top and
+// bottom are `arm` texels (at most a third of the width); the ones down the sides stop at about
+// a third of the height, so the sides stay open in the middle.
+void Brackets(raster::Mask& mask, int ox, int oy, int l, int t, int r, int b, int arm, int thick)
+{
+    const int armH = std::min(arm, (r - l) / 3);
+    const int armV = std::min(arm, std::max(thick * 2, (b - t) * 3 / 10));
+    MaskRect(mask, ox, oy, l, t, armH, thick);                MaskRect(mask, ox, oy, l, t, thick, armV);
+    MaskRect(mask, ox, oy, r - armH, t, armH, thick);         MaskRect(mask, ox, oy, r - thick, t, thick, armV);
+    MaskRect(mask, ox, oy, l, b - thick, armH, thick);        MaskRect(mask, ox, oy, l, b - armV, thick, armV);
+    MaskRect(mask, ox, oy, r - armH, b - thick, armH, thick); MaskRect(mask, ox, oy, r - thick, b - armV, thick, armV);
+}
+
+// "Attacking you": red brackets a little outside the target frame (box l, t, r, b), blinked by
+// Upload. Built as fill + outline masks covering just their box, so blinking repaints only that.
+// Returns the row below them.
+int AttackBrackets(Plate& p, int l, int t, int r, int b, int e, int arm, int thick)
+{
+    const int al = std::max(0, l - e), ar = std::min(kTexW, r + e);
+    const int at = std::max(0, t - e), ab = std::min(kTexH, b + e);
+    const int o = g_outline;
+    p.atkX = al - o;
+    p.atkY = at - o;
+    p.atkFill = raster::Mask(ar - al + 2 * o, ab - at + 2 * o);
+    Brackets(p.atkFill, p.atkX, p.atkY, al, at, ar, ab, arm, thick);
+    p.atkOutline = raster::Dilate(p.atkFill, o);
+    return ab;
+}
+
+// The org line, centred at row y; returns the row below it. (The title is on the name line, as in
+// the game's tag.)
+float OrgLine(Canvas& c, const game::Identity& id, float y, float* halfW)
+{
+    if (!Cfg().np.showOrg)
+        return y;
+    const std::string second = n3::Org(id);
+    if (second.empty())
+        return y;
+    const std::wstring line = Fit(g_smallFont, Widen(second), static_cast<float>(kTexW - 4 * kPad));
+    const float w = g_smallFont.TextWidth(line.c_str(), static_cast<int>(line.size()));
+    DrawText(c, g_smallFont, line, (kTexW - w) * 0.5f, y, SideRgb(n3::GetSkill(id, n3::kStatSide)));
+    *halfW = std::max(*halfW, w * 0.5f);
+    return y + g_smallFont.Height();
+}
+
+// Classic: the game's own tags, sharp at any size. The name alone in bold (no level); your nano
+// target gets teal corners at the top, your fight target red corners at the bottom (the same
+// character both), and target plates a thin health bar. Every plate keeps room for the bar and both
+// corner sets (and the "attacking you" brackets), so a plate doesn't move when it becomes a target.
+constexpr uint32_t kClassicNanoRgb = 0x4696A5;
+constexpr uint32_t kClassicFightRgb = 0xE11414;
+void RenderClassic(Plate& p, const game::Identity& id, uint8_t* ind)
+{
+    const NameplateConfig& cfg = Cfg().np;
+    Canvas c;
+    const bool corpse = id.type != kTypeCharacter;
+    const std::vector<TextRun> name = FitRuns(g_classicFont, NameRuns(id, ind), static_cast<float>(kTexW - 4 * kPad) * 0.8f);
+    const float nameW = RunsWidth(g_classicFont, name);
+    const float asc = g_classicFont.Ascent();
+    const float cap = asc * 0.72f;
+    auto U = [&](float f) { return std::max(1, static_cast<int>(std::lround(cap * f))); }; // in cap heights
+
+    const int th = std::max(3, U(0.22f));     // corner thickness
+    const int armH = U(1.15f), armV = U(0.8f); // corner arms
+    const int padX = U(1.4f);                 // name to the corners' outer edge
+    const int atkTh = th + std::max(1, S(2));
+    const int e = atkTh + std::max(1, S(2));  // the "attacking you" brackets outside the corners
+    const int barH = std::max(4, U(0.3f)), barBorder = std::max(1, S(2));
+
+    // Name: its capitals' top a little below the corners' top edge.
+    const float nameTop = static_cast<float>(kPad + g_outline + e + th) + cap * 0.15f - (asc - cap);
+    const float capTop = nameTop + asc - cap;
+    const float baseline = nameTop + asc;
+    DrawRuns(c, g_classicFont, name, (kTexW - nameW) * 0.5f, nameTop);
+
+    // Bar slot (drawn only on target plates, as the game does).
+    p.level.clear();
+    p.barH = barH;
+    p.barBorder = barBorder;
+    p.barLabel = false;
+    p.barW = std::max(U(3.0f), static_cast<int>(nameW * 0.3f));
+    p.barY = -1;
+    if (p.role != Role::Normal && cfg.showHealth && !corpse) {
+        const int life = n3::GetSkill(id, n3::kStatLife);
+        if (life > 0 && life != n3::kNoValue)
+            p.barY = static_cast<int>(baseline + cap * 0.8f);
+    }
+
+    // The corner box.
+    const int halfBox = static_cast<int>(std::ceil(nameW * 0.5f)) + padX;
+    const int left = std::max(0, kTexW / 2 - halfBox), right = kTexW - left;
+    const int top = static_cast<int>(std::floor(capTop - cap * 0.15f)) - th;
+    const int bottom = std::min(kTexH, static_cast<int>(std::ceil(baseline + cap * 2.6f)));
+    if (p.role != Role::Normal) {
+        const bool nano = p.role == Role::Selected;
+        const bool fight = p.role == Role::Fighting || p.alsoFight;
+        raster::Mask nanoMask(kTexW, kTexH), fightMask(kTexW, kTexH);
+        if (nano) {
+            MaskRect(nanoMask, 0, 0, left, top, armH, th);         MaskRect(nanoMask, 0, 0, left, top, th, armV);
+            MaskRect(nanoMask, 0, 0, right - armH, top, armH, th); MaskRect(nanoMask, 0, 0, right - th, top, th, armV);
+        }
+        if (fight) {
+            MaskRect(fightMask, 0, 0, left, bottom - th, armH, th);         MaskRect(fightMask, 0, 0, left, bottom - armV, th, armV);
+            MaskRect(fightMask, 0, 0, right - armH, bottom - th, armH, th); MaskRect(fightMask, 0, 0, right - th, bottom - armV, th, armV);
+        }
+        raster::Mask both(kTexW, kTexH);
+        for (size_t i = 0; i < both.a.size(); ++i)
+            both.a[i] = std::max(nanoMask.a[i], fightMask.a[i]);
+        c.Over(0, 0, raster::Dilate(both, std::max(1, g_outline / 2)), 0x000000, 0.8f);
+        c.Over(0, 0, nanoMask, kClassicNanoRgb, 1.0f);
+        c.Over(0, 0, fightMask, kClassicFightRgb, 1.0f);
+    }
+
+    float visHalfW = std::max(nameW * 0.5f, p.barW * 0.5f + barBorder);
+    float y = static_cast<float>(AttackBrackets(p, left, top, right, bottom, e, armH + e + S(8), atkTh) + S(4));
+    y = OrgLine(c, id, y, &visHalfW);
+
+    p.anchorRow = static_cast<int>(std::ceil(y)) + 2;
+    p.nameMidRow = capTop + cap * 0.5f;
+    p.hitHalfW = visHalfW;
+    p.visTop = capTop;
+    p.visBottom = static_cast<float>(p.anchorRow - 2);
+    p.text = c.ToArgb();
+    p.nameCap = std::max(1.0f, cap);
+    p.hpPct = -1;
+    p.barRgb = 0;
+}
+
+// Modern layout: the name centred over the health bar (percentage inside), the level larger to the
+// left of both and vertically centred on them, and the org/title line below.
 void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
 {
+    if (Cfg().np.style == kStyleClassic) {
+        RenderClassic(p, id, ind);
+        return;
+    }
     const NameplateConfig& cfg = Cfg().np;
     Canvas c;
     const float maxW = static_cast<float>(kTexW - 4 * kPad);
 
     // Only characters (Identity type 50000) have level and health; corpses ("Remains of ...") are
     // Corpse_t dynels of type 51050 and get just their name.
-    const std::string rawName = n3::Name(id);
     const bool corpse = id.type != kTypeCharacter;
 
     std::wstring level;
@@ -379,8 +612,8 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const float levelW = level.empty() ? 0.0f : g_levelFont.TextWidth(level.c_str(), static_cast<int>(level.size()));
     // The name is centred on the plate; the level sits beside the name and bar, so it only limits
     // the name when the name is wider than the bar.
-    const std::wstring name = Fit(g_nameFont, Widen(rawName), maxW - 2.0f * (levelW + gap));
-    const float nameW = g_nameFont.TextWidth(name.c_str(), static_cast<int>(name.size()));
+    const std::vector<TextRun> name = FitRuns(g_nameFont, NameRuns(id, ind), maxW - 2.0f * (levelW + gap));
+    const float nameW = RunsWidth(g_nameFont, name);
 
     const int m = S(10);               // bracket margin, same on every side
     const int th = std::max(4, S(8));  // target bracket thickness: bold, readable at a distance
@@ -392,7 +625,7 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const float nameTop = static_cast<float>(kPad + g_outline + e + m + th);
     float y = nameTop;
     const float nameLineW = nameW;
-    DrawText(c, g_nameFont, name, (kTexW - nameW) * 0.5f, y, NameRgb(id, ind));
+    DrawRuns(c, g_nameFont, name, (kTexW - nameW) * 0.5f, y);
     y += g_nameFont.Height();
     float boxBottom = nameTop + g_nameFont.Ascent(); // without a bar: the name's baseline
     // Visible extent (texels): top of the name's capitals to the lowest thing drawn, and the
@@ -405,6 +638,9 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     // so a long name never overhangs it.
     p.barY = -1;
     p.barW = std::max(g_barW, static_cast<int>(std::ceil(nameW)) + 2 * S(8));
+    p.barH = g_barH;
+    p.barBorder = g_barBorder;
+    p.barLabel = true;
     if (cfg.showHealth && !corpse) {
         const int life = n3::GetSkill(id, n3::kStatLife);
         if (life > 0 && life != n3::kNoValue) {
@@ -431,13 +667,6 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
         visHalfW = std::max(visHalfW, kTexW * 0.5f - p.levelX);
     }
 
-    std::string second;
-    if (cfg.showOrg) {
-        second = n3::Title(id);
-        const std::string org = n3::Org(id);
-        if (!org.empty())
-            second = second.empty() ? org : second + " \xB7 " + org;
-    }
     // The bracket frame: the level, name and bar with the same margin on every side, symmetric about
     // the texture centre (where name and bar are centred).
     const int left = std::max(0, kTexW / 2 - static_cast<int>(std::ceil(visHalfW)) - m - th);
@@ -445,56 +674,20 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const float capTop = nameTop + g_nameFont.Ascent() - g_nameFont.Ascent() * 0.72f;
     const int top = std::max(0, static_cast<int>(std::floor(capTop)) - m - th);
     const int bottom = std::min(kTexH, static_cast<int>(std::ceil(boxBottom)) + m + th); // exclusive
-    // Corner brackets of a box into a mask whose (0, 0) is texel (ox, oy). Arms along the top and
-    // bottom are `arm` texels (at most a third of the width); the ones down the sides stop at about
-    // a third of the height, so the sides stay open in the middle.
-    auto brackets = [&](raster::Mask& mask, int ox, int oy, int l, int t, int r, int b, int arm, int thick) {
-        auto rect = [&](int x, int yy, int w, int h) {
-            for (int j = std::max(0, yy - oy); j < std::min(mask.h, yy - oy + h); ++j)
-                for (int i = std::max(0, x - ox); i < std::min(mask.w, x - ox + w); ++i)
-                    mask.a[static_cast<size_t>(j) * mask.w + i] = 1.0f;
-        };
-        const int armH = std::min(arm, (r - l) / 3);
-        const int armV = std::min(arm, std::max(thick * 2, (b - t) * 3 / 10));
-        rect(l, t, armH, thick);                rect(l, t, thick, armV);
-        rect(r - armH, t, armH, thick);         rect(r - thick, t, thick, armV);
-        rect(l, b - thick, armH, thick);        rect(l, b - armV, thick, armV);
-        rect(r - armH, b - thick, armH, thick); rect(r - thick, b - armV, thick, armV);
-    };
-
     // Selected (nano) / fight target: the brackets themselves. Fight orange stays apart from the
     // "attacking you" red.
     if (p.role != Role::Normal) {
         const uint32_t rgb = p.role == Role::Fighting ? 0xFF8A1A : (p.alsoFight ? 0xFFD21F : 0xFFFFFF);
         raster::Mask mask(kTexW, kTexH);
-        brackets(mask, 0, 0, left, top, right, bottom, len, th);
+        Brackets(mask, 0, 0, left, top, right, bottom, len, th);
         c.Over(0, 0, raster::Dilate(mask, g_outline), 0x000000, 1.0f);
         c.Over(0, 0, mask, rgb, 1.0f);
     }
 
-    // "Attacking you": red brackets a little outside the target frame, blinked by Upload. Built here
-    // as fill + outline masks covering just their box, so blinking repaints only that region.
-    {
-        const int al = std::max(0, left - e), ar = std::min(kTexW, right + e);
-        const int at = std::max(0, top - e), ab = std::min(kTexH, bottom + e);
-        const int o = g_outline;
-        p.atkX = al - o;
-        p.atkY = at - o;
-        p.atkFill = raster::Mask(ar - al + 2 * o, ab - at + 2 * o);
-        // Longer arms and slightly thicker than the target brackets.
-        brackets(p.atkFill, p.atkX, p.atkY, al, at, ar, ab, len + e + S(12), atkTh);
-        p.atkOutline = raster::Dilate(p.atkFill, o);
-        y = std::max(y, static_cast<float>(ab + S(4)));
-    }
-
-    // Below the brackets: title and org.
-    if (!second.empty()) {
-        const std::wstring line = Fit(g_smallFont, Widen(second), maxW);
-        const float w = g_smallFont.TextWidth(line.c_str(), static_cast<int>(line.size()));
-        DrawText(c, g_smallFont, line, (kTexW - w) * 0.5f, y, SideRgb(n3::GetSkill(id, n3::kStatSide)));
-        visHalfW = std::max(visHalfW, w * 0.5f);
-        y += g_smallFont.Height();
-    }
+    // "Attacking you": longer arms and slightly thicker than the target brackets. Below them, title
+    // and org.
+    y = std::max(y, static_cast<float>(AttackBrackets(p, left, top, right, bottom, e, len + e + S(12), atkTh) + S(4)));
+    y = OrgLine(c, id, y, &visHalfW);
     // The row that sits at the game's anchor: the plate's bottom edge. The same for a character's
     // normal, selected and attacking plate, since they share the layout.
     p.anchorRow = static_cast<int>(std::ceil(y)) + 2;
@@ -589,16 +782,18 @@ void Upload(Plate& p, int tenths, uint32_t barRgb)
     }
     if (p.barY >= 0 && tenths >= 0) {
         const int x0 = (kTexW - p.barW) / 2;
-        FillRect(px, x0 - g_barBorder, p.barY - g_barBorder, p.barW + 2 * g_barBorder, g_barH + 2 * g_barBorder, 0xF0000000);
-        FillRect(px, x0, p.barY, p.barW, g_barH, 0xFF333333);
-        FillRect(px, x0, p.barY, p.barW * tenths / 1000, g_barH, 0xFF000000 | barRgb);
+        FillRect(px, x0 - p.barBorder, p.barY - p.barBorder, p.barW + 2 * p.barBorder, p.barH + 2 * p.barBorder, 0xF0000000);
+        FillRect(px, x0, p.barY, p.barW, p.barH, 0xFF333333);
+        FillRect(px, x0, p.barY, p.barW * tenths / 1000, p.barH, 0xFF000000 | barRgb);
+    }
+    if (p.barY >= 0 && tenths >= 0 && p.barLabel) {
 
         wchar_t label[16];
         swprintf_s(label, L"%d.%d%%", tenths / 10, tenths % 10);
         const int len = static_cast<int>(wcslen(label));
         Canvas c;
         const float w = g_pctFont.TextWidth(label, len);
-        DrawText(c, g_pctFont, label, (kTexW - w) * 0.5f, p.barY + (g_barH - g_pctFont.Height()) * 0.5f, 0xFFFFFF);
+        DrawText(c, g_pctFont, label, (kTexW - w) * 0.5f, p.barY + (p.barH - g_pctFont.Height()) * 0.5f, 0xFFFFFF);
         Composite(px, c);
     }
     if (!p.level.empty()) {
@@ -1126,12 +1321,14 @@ int __fastcall Hook_Update(uint8_t* ind)
     if (!game::IndicatorPosition(id, &pos))
         return keep;
     const bool target = p.role != Role::Normal;
+    // Classic is placed and moves as the game's tags do: only its size and sharpness differ.
+    const bool classic = cfg.style == kStyleClassic;
     // The game's anchor follows the head, so it bobs with walking, running and fighting. Keep the
     // plate's height above the character's own position (its feet, which follow the ground without
     // the bob) and smooth only that; big changes (mounting, zoning, a new model) snap.
     float steady = 0.0f; // world units added to the anchor's height
     game::Vec3 feet;
-    if (n3::Position(id, &feet)) {
+    if (!classic && n3::Position(id, &feet)) {
         const float height = pos.y - feet.y;
         const DWORD now = GetTickCount();
         if (!p.headTick || std::fabs(height - p.headHeight) > kHeadSnap) {
@@ -1159,8 +1356,12 @@ int __fastcall Hook_Update(uint8_t* ind)
     const float worldPerTexel = capPx / p.nameCap / ppu;
     const float halfW = kTexW * 0.5f * worldPerTexel;
     const float halfH = kTexH * 0.5f * worldPerTexel;
-    // Lift the quad so anchorRow sits at the game's anchor (above the head).
-    const float lift = (p.anchorRow - kTexH * 0.5f) * worldPerTexel;
+    // Lift the quad so anchorRow sits at the game's anchor (above the head). Classic: the row at the
+    // anchor is the one that puts the name's middle where the game's tag has it.
+    const float anchorRow = classic && p.origHalfH > 0.0f
+        ? p.nameMidRow + p.origHalfH * kClassicNameRise / worldPerTexel
+        : static_cast<float>(p.anchorRow);
+    const float lift = (anchorRow - kTexH * 0.5f) * worldPerTexel;
 
     // Fade: in over FadeInSec after the tag appears, and out between FadeStart and the game's
     // 30 m tag range (distance from the player), so tags don't pop.
@@ -1185,7 +1386,7 @@ int __fastcall Hook_Update(uint8_t* ind)
     // fight targets show through everything.
     {
         const DWORD now = GetTickCount();
-        if (target) {
+        if (target && !classic) {
             p.inSight = true;
         } else if (!p.sightTick || now - p.sightTick >= kSightEveryMs) {
             bool known = false;
@@ -1214,13 +1415,13 @@ int __fastcall Hook_Update(uint8_t* ind)
     const float pxPerTexel = capPx / p.nameCap;
     const float w2 = p.hitHalfW * pxPerTexel;
     // Visible part relative to the anchor (texture row anchorRow is at the anchor).
-    const float visBelow = (p.anchorRow - p.visBottom) * pxPerTexel; // anchor -> visible bottom (< 0: below it)
+    const float visBelow = (anchorRow - p.visBottom) * pxPerTexel; // anchor -> visible bottom (< 0: below it)
     const float h = (p.visBottom - p.visTop) * pxPerTexel;
     const float priority = view.z; // nearer keeps its spot (selecting doesn't reorder plates)
     // Your selected and fight targets in front of the camera stay on screen: off the side, top or
     // bottom, the plate stops at the edge (its brackets included), shifted in the camera's plane.
     float edgeRightPx = 0.0f, edgeDownPx = 0.0f;
-    if (target && onScreen) {
+    if (target && onScreen && !classic) {
         int screenW = 0, screenH = 0;
         game::ViewportSize(&screenW, &screenH);
         const float room = (p.visTop - static_cast<float>(p.atkY + g_outline)) * pxPerTexel; // brackets around the name
@@ -1238,7 +1439,7 @@ int __fastcall Hook_Update(uint8_t* ind)
         sy += edgeDownPx;
     }
     float targetUp = 0.0f;
-    if (cfg.stack && onScreen) {
+    if (cfg.stack && onScreen && !classic) {
         const DWORD now = GetTickCount();
         const float gap = 1.0f;
         for (int pass = 0; pass < 8; ++pass) {

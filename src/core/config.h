@@ -96,6 +96,7 @@ struct FctConfig {
 
 struct NameplateConfig {
     bool enable = true;
+    int style = 0;             // 0 Modern, 1 Classic (the game's tags, sharp at any size)
     float naturalSize = 0.14f; // world height of the name's capitals before clamping
     float minPx = 11.0f;       // name capitals on screen never smaller than this ...
     float maxPx = 20.0f;       // ... or larger than this

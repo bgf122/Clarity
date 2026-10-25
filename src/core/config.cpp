@@ -128,6 +128,8 @@ const char kDefaultIni[] =
     "[Nameplates]\n"
     "; 0 = the game's original name tags\n"
     "Enable=1\n"
+    "; 0 = Modern, 1 = Classic (the game's look - name only, corner marks on targets - sharp at any size)\n"
+    "Style=0\n"
     "; Size of the name's capitals in world units; the result on screen is clamped to MinPx..MaxPx\n"
     "NaturalSize=0.14\n"
     "MinPx=11\n"
@@ -349,6 +351,7 @@ void LoadConfig()
     const NameplateConfig dn;
     const wchar_t* ns = L"Nameplates";
     n.enable = ReadFloat(p, ns, L"Enable", dn.enable) != 0.0f;
+    n.style = std::clamp(static_cast<int>(ReadFloat(p, ns, L"Style", static_cast<float>(dn.style))), 0, 1);
     n.naturalSize = ReadFloat(p, ns, L"NaturalSize", dn.naturalSize);
     n.minPx = ReadFloat(p, ns, L"MinPx", dn.minPx);
     n.maxPx = ReadFloat(p, ns, L"MaxPx", dn.maxPx);

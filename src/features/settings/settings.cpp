@@ -83,6 +83,7 @@ struct Item {
 #define G true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1
 #define NR false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1 // radio buttons: choices + npInt follow
 
+const char* const kNpStyles[] = {"Modern", "Classic (the game's look)", nullptr};
 const char* const kBarColors[] = {"Classic (by level)", "Single colour", "By health", nullptr};
 
 const Item kItems[] = {
@@ -127,7 +128,8 @@ const Item kItems[] = {
     {"CLR_FctSelfSigns", L"SelfSigns", "Show - before damage you take and + before gains", B(selfSigns), nullptr},
     {"CLR_FctFollowTarget", L"FollowTarget", "Numbers follow their target as it moves", B(followTarget), nullptr},
 
-    {"CLR_NpEnable", L"Enable", "Modern nameplates (off = the game's original)", NB(enable), "Nameplates"},
+    {"CLR_NpEnable", L"Enable", "Clarity nameplates (off = the game's original)", NB(enable), "Nameplates"},
+    {"CLR_NpStyle", L"Style", "Style:", NR, nullptr, -1, kNpStyles, &NameplateConfig::style},
     {"CLR_NpNaturalSize", L"NaturalSize", "Size in the world (name capitals):", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},
     {"CLR_NpMinPx", L"MinPx", "Smallest on screen:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
     {"CLR_NpMaxPx", L"MaxPx", "Largest on screen:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},

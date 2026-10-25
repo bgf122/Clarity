@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Clarity VERSION 0.1.9 LANGUAGES C CXX)
+project(Clarity VERSION 0.1.10 LANGUAGES C CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Anarchy Online is 32-bit: configure with -A Win32")

@@ -80,6 +80,7 @@ struct Plate {
     void* sprite = nullptr; // the RSprite we last patched
     float signX[4] = {}, signY[4] = {};
     float upSign = 1.0f;
+    float rightSign = 1.0f;     // quad x towards the screen's right (the texture's left edge has u = 0)
     Kind kind = Kind::Player;
     std::vector<uint32_t> text; // ARGB without the health bar
     float nameCap = 30.0f;      // texels, what MinPx/MaxPx refer to
@@ -171,6 +172,7 @@ constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height
 constexpr DWORD kSightEveryMs = 100;   // line-of-sight test interval per plate
 constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes between
 constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
+constexpr float kEdgeMarginPx = 8.0f;     // target plates kept this far inside the window edges
 constexpr float kFirstPersonRadius = 1.5f; // your own plate's anchor this close to the camera = first person
 constexpr int kBlinkSteps = 6;         // painted strengths (each change re-uploads the texture)
 constexpr float kBlinkLow = 0.25f;     // faintest strength
@@ -948,8 +950,8 @@ void Build(uint8_t* ind)
         // The game's quad: remember it to restore later, and which corner is which.
         auto* base = static_cast<uint8_t*>(sprite);
         const Vertex* v = reinterpret_cast<const Vertex*>(base + kSpriteVerts);
-        float topSign = 1.0f;
-        float minV = 1e9f;
+        float topSign = 1.0f, leftSign = -1.0f;
+        float minV = 1e9f, minU = 1e9f;
         for (int i = 0; i < 4; ++i) {
             p.origVerts[i] = v[i];
             p.signX[i] = v[i].x >= 0.0f ? 1.0f : -1.0f;
@@ -958,7 +960,12 @@ void Build(uint8_t* ind)
                 minV = v[i].v;
                 topSign = p.signY[i];
             }
+            if (v[i].u < minU) {
+                minU = v[i].u;
+                leftSign = p.signX[i];
+            }
         }
+        p.rightSign = -leftSign;
         p.origHalfW = *reinterpret_cast<float*>(base + kSpriteHalfW);
         p.origHalfH = *reinterpret_cast<float*>(base + kSpriteHalfH);
         p.upSign = topSign;
@@ -1174,10 +1181,13 @@ int __fastcall Hook_Update(uint8_t* ind)
 
     // Hidden behind walls and terrain like the game's tags, but not behind characters: the line from
     // the camera to the plate is tested against the playfield's static world (a few times a
-    // second, not every frame), and the plate fades out while it is blocked.
+    // second, not every frame), and the plate fades out while it is blocked. Your selected and
+    // fight targets show through everything.
     {
         const DWORD now = GetTickCount();
-        if (!p.sightTick || now - p.sightTick >= kSightEveryMs) {
+        if (target) {
+            p.inSight = true;
+        } else if (!p.sightTick || now - p.sightTick >= kSightEveryMs) {
             bool known = false;
             const bool clear = game::LineOfSight(game::CameraWorldPos(), pos, &known);
             p.inSight = !known || clear;
@@ -1207,6 +1217,26 @@ int __fastcall Hook_Update(uint8_t* ind)
     const float visBelow = (p.anchorRow - p.visBottom) * pxPerTexel; // anchor -> visible bottom (< 0: below it)
     const float h = (p.visBottom - p.visTop) * pxPerTexel;
     const float priority = view.z; // nearer keeps its spot (selecting doesn't reorder plates)
+    // Your selected and fight targets in front of the camera stay on screen: off the side, top or
+    // bottom, the plate stops at the edge (its brackets included), shifted in the camera's plane.
+    float edgeRightPx = 0.0f, edgeDownPx = 0.0f;
+    if (target && onScreen) {
+        int screenW = 0, screenH = 0;
+        game::ViewportSize(&screenW, &screenH);
+        const float room = (p.visTop - static_cast<float>(p.atkY + g_outline)) * pxPerTexel; // brackets around the name
+        const float left = sx - w2 - room, right = sx + w2 + room;
+        const float bottom = sy - visBelow + room, top = sy - visBelow - h - room;
+        if (left < kEdgeMarginPx)
+            edgeRightPx = kEdgeMarginPx - left;
+        else if (right > screenW - kEdgeMarginPx)
+            edgeRightPx = screenW - kEdgeMarginPx - right;
+        if (top < kEdgeMarginPx)
+            edgeDownPx = kEdgeMarginPx - top;
+        else if (bottom > screenH - kEdgeMarginPx)
+            edgeDownPx = screenH - kEdgeMarginPx - bottom;
+        sx += edgeRightPx;
+        sy += edgeDownPx;
+    }
     float targetUp = 0.0f;
     if (cfg.stack && onScreen) {
         const DWORD now = GetTickCount();
@@ -1268,8 +1298,8 @@ int __fastcall Hook_Update(uint8_t* ind)
     auto* base = static_cast<uint8_t*>(sprite);
     Vertex* v = reinterpret_cast<Vertex*>(base + kSpriteVerts);
     for (int i = 0; i < 4; ++i) {
-        v[i].x = p.signX[i] * halfW;
-        v[i].y = p.signY[i] * halfH + p.upSign * (lift + stackWorld + steady);
+        v[i].x = p.signX[i] * halfW + p.rightSign * edgeRightPx / ppu;
+        v[i].y = p.signY[i] * halfH + p.upSign * (lift + stackWorld + steady - edgeDownPx / ppu);
         v[i].diffuse = diffuse;
     }
     *reinterpret_cast<float*>(base + kSpriteHalfW) = halfW;

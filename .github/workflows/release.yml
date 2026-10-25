@@ -36,8 +36,21 @@ jobs:
         run: |
           $ver = (Get-Item build/Release/dinput.dll).VersionInfo.ProductVersion
           New-Item -ItemType Directory dist | Out-Null
-          Compress-Archive -Path build/Release/dinput.dll, README.md, LICENSE, THIRD_PARTY_NOTICES.md -DestinationPath "dist/Clarity-$ver.zip"
+          Compress-Archive -Path build/Release/dinput.dll, README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES.md -DestinationPath "dist/Clarity-$ver.zip"
           "ZIP=dist/Clarity-$ver.zip" >> $env:GITHUB_ENV
+
+      - name: Release notes
+        shell: pwsh
+        run: |
+          # The version's section of CHANGELOG.md ("## <version>" up to the next "## ").
+          $ver = (Get-Item build/Release/dinput.dll).VersionInfo.ProductVersion
+          $m = [regex]::Match((Get-Content CHANGELOG.md -Raw), "(?ms)^## $([regex]::Escape($ver))[ \t]*\r?\n(.*?)(?=^## |\z)")
+          if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) {
+            if ($env:GITHUB_REF_TYPE -eq 'tag') { throw "CHANGELOG.md has no section for $ver" }
+            "No CHANGELOG.md section for $ver yet."
+          }
+          $m.Groups[1].Value.Trim() | Set-Content -Encoding utf8 dist/notes.md
+          Get-Content dist/notes.md
 
       - uses: actions/upload-artifact@v4
         with:
@@ -48,4 +61,4 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "Clarity ${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" "${{ env.ZIP }}" --title "Clarity ${{ github.ref_name }}" --notes-file dist/notes.md

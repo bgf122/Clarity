@@ -23,6 +23,7 @@ python tools/verify_sigs.py <test client dir>
 - The post-build step copies `dinput.dll` to `DEPLOY_DIR` (empty = no copy). The game must be closed, because the DLL is locked while it runs.
 - The version is `project(Clarity VERSION ...)` in `CMakeLists.txt`. It goes into the DLL's VERSIONINFO (ProductName "Clarity"), which the AoForge installer reads.
 - Releases: pushing a `v*` tag runs `.github/workflows/release.yml`, which builds and attaches `Clarity-<version>.zip`.
+- Patch notes: add a `## <version>` section to `CHANGELOG.md` before tagging. Write it for players, not as RE notes. The workflow makes that section the release's notes, which AoForge shows per version, and a tag without a section fails.
 
 ## Per-install AO data
 AO keeps prefs, `DXDiagOutput.txt` and the GUI in `%LOCALAPPDATA%\Funcom\Anarchy Online\<hash>\client\`.

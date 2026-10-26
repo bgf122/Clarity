@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Clarity VERSION 0.1.11 LANGUAGES C CXX)
+project(Clarity VERSION 0.1.12 LANGUAGES C CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Anarchy Online is 32-bit: configure with -A Win32")
@@ -36,11 +36,13 @@ add_library(clarity SHARED
     src/core/n3.cpp
     src/core/text_raster.cpp
     src/core/threat.cpp
+    src/core/wndproc.cpp
     src/features/fct/fct.cpp
     src/features/fct/atlas.cpp
     src/features/settings/settings.cpp
     src/features/nameplates/nameplates.cpp
     src/features/hideui/hideui.cpp
+    src/features/bars/bars.cpp
     ${CMAKE_BINARY_DIR}/generated/clarity.rc
 )
 set_target_properties(clarity PROPERTIES OUTPUT_NAME dinput)

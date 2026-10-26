@@ -88,6 +88,11 @@ void DestroyVisualMaterial(void* vm);
 void* VisualMaterialMaterial(void* vm);
 void* VisualMaterialTexture(void* vm);
 
+// Sends one part of a VisualMaterial_t's texture: `rect` (texels, right/bottom exclusive) of an ARGB
+// image `width` texels wide, as the GUI updates its surfaces (VisualMaterial_t::Modify -> the renderer's
+// RTexture_t::Load with the rectangle). False if it isn't available.
+bool ModifyVisualMaterial(void* vm, const uint32_t* pixels, int width, const RECT& rect);
+
 // Sets the render states of a name label (unlit, alpha-blended) in an RMaterial_t's render-state block
 // (+0x70, applied by RViewPort_t::SetMaterial), creating the block if the material has none. Depth is
 // tested (unless onTop: drawn over everything) and never written.

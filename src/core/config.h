@@ -127,6 +127,20 @@ struct NameplateConfig {
     int petFamilyCount = 5;
 };
 
+// Health / nano and target bars: Clarity's own panels in place of the game's bar windows.
+struct BarsConfig {
+    bool enable = false;           // on = Clarity's bars in place of the game's health, nano and target bars
+    bool showTarget = true;        // the fight target's and nano target's panels
+    bool locked = false;           // panels can't be dragged
+    bool trail = true;             // health just lost shows as a light segment that shrinks away
+    int numbers = 2;               // on your bars: 0 the amount, 1 the percent, 2 both
+    float scale = 1.0f;            // panel size (0.6-2)
+    // Positions (GUI units, top-left), saved when a panel is dragged; -1 = the default place.
+    float selfX = -1.0f, selfY = -1.0f;
+    float targetX = -1.0f, targetY = -1.0f; // the fight target (and the nano target when there's none)
+    float nanoX = -1.0f, nanoY = -1.0f;     // the nano target while there's a fight target
+};
+
 // A key with modifiers; vk 0 = none.
 struct Hotkey {
     unsigned vk = 0;
@@ -140,6 +154,7 @@ struct InterfaceConfig {
 struct Config {
     FctConfig fct;
     NameplateConfig np;
+    BarsConfig bars;
     InterfaceConfig ui;
 };
 

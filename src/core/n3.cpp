@@ -33,7 +33,12 @@ using ConsiderFn = int(__thiscall*)(void* self, const game::Identity& id, float&
 using FontSystemFn = void*(__cdecl*)();
 using GetColorFn = int(__thiscall*)(void* self, int code);
 using GetPosFn = bool(__thiscall*)(void* self, const game::Identity& id, game::Vec3& out);
+using GetAttackingFn = bool(__thiscall*)(void* self, game::Identity& out);
+using CurrentTargetFn = game::Identity*(__thiscall*)(void* self, game::Identity* ret);
 GetPosFn g_getPos;
+GetAttackingFn g_getAttacking;
+InstanceFn g_inputConfig;
+CurrentTargetFn g_currentTarget;
 ConsiderFn g_consider;
 FontSystemFn g_fontSystem;
 GetColorFn g_getColor;
@@ -79,6 +84,10 @@ bool Init()
     ok &= Resolve(g_consider,"Interfaces.dll", "?N3Msg_Consider@N3InterfaceModule_t@@QBE?AW4Consider_e@@ABVIdentity_t@@AAM@Z");
     ok &= Resolve(g_fontSystem, "GUI.dll", "?GetInstance@FontSystem_t@@SAPAV1@XZ");
     ok &= Resolve(g_getColor, "GUI.dll", "?GetColor@FontSystem_t@@QBEHW4ColorCode_e@@@Z");
+    // Targets (the bars): optional, FightTarget / SelectedTarget report none without them.
+    Resolve(g_getAttacking, "Interfaces.dll", "?N3Msg_GetAttackingID@N3InterfaceModule_t@@QBE_NAAVIdentity_t@@@Z");
+    Resolve(g_inputConfig, "GUI.dll", "?GetInstance@InputConfig_t@@SAPAV1@XZ");
+    Resolve(g_currentTarget, "GUI.dll", "?GetCurrentTarget@InputConfig_t@@QBE?AVIdentity_t@@XZ");
     return ok;
 }
 
@@ -136,6 +145,29 @@ int Consider(const game::Identity& id, float* fraction)
     const int c = m ? g_consider(m, id, f) : 0;
     *fraction = f;
     return c;
+}
+
+bool FightTarget(game::Identity* out)
+{
+    void* m = Module();
+    game::Identity id{0, 0};
+    if (!m || !g_getAttacking || !g_getAttacking(m, id) || (id.type == 0 && id.instance == 0))
+        return false;
+    *out = id;
+    return true;
+}
+
+bool SelectedTarget(game::Identity* out)
+{
+    void* ic = g_inputConfig ? g_inputConfig() : nullptr;
+    if (!ic || !g_currentTarget)
+        return false;
+    game::Identity id{0, 0};
+    g_currentTarget(ic, &id);
+    if (id.type == 0 && id.instance == 0)
+        return false;
+    *out = id;
+    return true;
 }
 
 uint32_t ColorOf(int colorCode)

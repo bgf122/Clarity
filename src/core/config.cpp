@@ -170,6 +170,28 @@ const char kDefaultIni[] =
     "; (95-98 players' pets, 221 Devileet); see Debug=1 output for a character's NPCFamily.\n"
     "PetFamilies=\n"
     "\n"
+    "[Bars]\n"
+    "; 1 = Clarity's health/nano and target bars instead of the game's; 0 = the game's bars\n"
+    "Enable=0\n"
+    "; Bars for your fight target and your nano target (the nano target's is smaller while you have a fight\n"
+    "; target, and takes the fight target's place when you don't)\n"
+    "ShowTarget=1\n"
+    "; 1 = the bars can't be dragged\n"
+    "Locked=0\n"
+    "; Health just lost shows as a light segment that shrinks away\n"
+    "Trail=1\n"
+    "; Numbers on the bars: 0 = amount (8,412 / 12,950), 1 = percent, 2 = both (stacked)\n"
+    "Numbers=2\n"
+    "; Size (0.6-2)\n"
+    "Scale=1\n"
+    "; Where the bars are (top-left, GUI units); set when you drag one. -1 = the default place.\n"
+    "SelfX=-1\n"
+    "SelfY=-1\n"
+    "TargetX=-1\n"
+    "TargetY=-1\n"
+    "NanoX=-1\n"
+    "NanoY=-1\n"
+    "\n"
     "[Interface]\n"
     "; Key that hides the game's interface (windows, chat, bars) and shows it again; nameplates and\n"
     "; floating text stay. Ctrl, Shift, Alt and a letter, digit or F1-F12, e.g. Ctrl+Shift+U. Empty = no key.\n"
@@ -394,6 +416,24 @@ void LoadConfig()
                 n.petFamilies[n.petFamilyCount++] = static_cast<int>(v);
             cur = end;
         }
+    }
+
+    {
+        BarsConfig& b = g_bufs[next].bars;
+        const BarsConfig db;
+        const wchar_t* bs = L"Bars";
+        b.enable = ReadFloat(p, bs, L"Enable", db.enable) != 0.0f;
+        b.showTarget = ReadFloat(p, bs, L"ShowTarget", db.showTarget) != 0.0f;
+        b.locked = ReadFloat(p, bs, L"Locked", db.locked) != 0.0f;
+        b.trail = ReadFloat(p, bs, L"Trail", db.trail) != 0.0f;
+        b.numbers = std::clamp(static_cast<int>(ReadFloat(p, bs, L"Numbers", static_cast<float>(db.numbers))), 0, 2);
+        b.scale = std::clamp(ReadFloat(p, bs, L"Scale", db.scale), 0.6f, 2.0f);
+        b.selfX = ReadFloat(p, bs, L"SelfX", db.selfX);
+        b.selfY = ReadFloat(p, bs, L"SelfY", db.selfY);
+        b.targetX = ReadFloat(p, bs, L"TargetX", db.targetX);
+        b.targetY = ReadFloat(p, bs, L"TargetY", db.targetY);
+        b.nanoX = ReadFloat(p, bs, L"NanoX", db.nanoX);
+        b.nanoY = ReadFloat(p, bs, L"NanoY", db.nanoY);
     }
 
     {

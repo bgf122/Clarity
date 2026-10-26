@@ -13,6 +13,8 @@ constexpr int kNoValue = 1234567890; // N3Msg_GetSkill's "no such stat" sentinel
 // Stat ids (GameData::Stat_e) used by the GUI's nametag builder.
 constexpr int kStatLife = 1;      // max health
 constexpr int kStatHealth = 27;
+constexpr int kStatNano = 214;      // current nano
+constexpr int kStatMaxNano = 221;
 constexpr int kStatSide = 33;
 constexpr int kStatLevel = 54;
 constexpr int kStatPetMaster = 196;
@@ -35,6 +37,13 @@ bool Position(const game::Identity& id, game::Vec3* out);
 // N3Msg_Consider: level comparison with the player. Returns the Consider_e value (0 = can't
 // consider) and the 0..1 fraction the GUI turns into the health-bar colour.
 int Consider(const game::Identity& id, float* fraction);
+
+// The fight target: N3Msg_GetAttackingID, whoever the client character is attacking. False if none.
+bool FightTarget(game::Identity* out);
+
+// The selected (nano) target: GUI InputConfig_t::GetCurrentTarget, where TargetingModule_t::SetTarget
+// puts every selection. False if none.
+bool SelectedTarget(game::Identity* out);
 
 // GUI FontSystem_t::GetColor(ColorCode_e): the RGB the text renderer uses for a colour code.
 uint32_t ColorOf(int colorCode);

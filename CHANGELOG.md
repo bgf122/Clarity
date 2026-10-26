@@ -2,6 +2,27 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.12
+
+### New: health, nano and target bars
+Clarity can now show its own bars in place of the game's. They're off until you turn them on in **Options > Clarity > Bars**.
+- **Your bars:** health over nano, in your interface skin's colours, with health in a deeper red.
+  - Health you just lost shows as a lighter piece that holds a moment, then shrinks away.
+- **Fight target:** its own bar, with a slowly pulsing orange outline so you always know who you're fighting.
+- **Nano target:** a bar of its own.
+  - While you have a fight target, it's a little smaller and sits apart.
+  - When you don't, it takes the fight target's place at full size.
+- **Names and levels:** above each target bar, coloured by how its level compares to yours, as the game rates it.
+- **Numbers:** each bar shows the amount, the percent, or both. Very large amounts are shortened, for example 1.0B.
+- **Moving them:** drag any bar where you want it. It stays there next time.
+- **The game's bars:** they're hidden while Clarity's are on, and come back when you turn Clarity's off.
+- **Settings:** a new **Bars** page in Options > Clarity. You can turn the bars on or off, pick the numbers, show or hide the target bars, lock the bars in place, turn the lost-health effect on or off, and set the size.
+
+### Nameplates
+- **Smoother in big fights:**
+  - Health changes on nameplates update much more cheaply than before.
+  - The blinking brackets on characters attacking you do too.
+
 ## 0.1.11
 
 ### Nameplates

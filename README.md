@@ -22,6 +22,13 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Like the game's own tags, plates are hidden behind walls and terrain, but not behind other characters.
   - Switch players, NPCs or pets off to get the game's own tags for them.
   - Works with ao-vk: plates are drawn after its shadows and effects.
+- **Health, nano and target bars** in place of the game's (off by default: Options > Clarity > Bars).
+  - Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
+  - Your fight target's bar, with a slowly pulsing orange outline.
+  - Your nano target's bar, a little smaller while you have a fight target; it takes the fight target's place when you don't.
+  - Above each target bar, its level and name, coloured by how its level compares to yours.
+  - On every bar: the amount, the percent, or both.
+  - Drag a bar to move it. The game's own health, nano and target bars come back when you turn Clarity's off.
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
 ## Install
@@ -47,7 +54,8 @@ Close the game and delete `dinput.dll`. You can also delete `Clarity.ini` (your 
 Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs: the file is reloaded automatically. The sections are:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
-- `[Nameplates]`: sizes, what's shown, opacity, font.
+- `[Nameplates]`: sizes, what's shown, opacity, font;
+- `[Bars]`: on/off, numbers, target bars, lock, size, and where each bar is.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

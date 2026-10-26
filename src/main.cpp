@@ -4,6 +4,8 @@
 #include "core/game.h"
 #include "core/hooks.h"
 #include "core/log.h"
+#include "core/wndproc.h"
+#include "features/bars/bars.h"
 #include "features/fct/fct.h"
 #include "features/hideui/hideui.h"
 #include "features/nameplates/nameplates.h"
@@ -55,6 +57,7 @@ DWORD WINAPI InitThread(void*)
 
     if (prk::HooksInit() && prk::game::Init()) {
         prk::fct::Install();
+        prk::bars::Install(); // (before the nameplates: a click on a panel isn't a click on a plate)
         prk::nameplates::Install();
         prk::hideui::Install();
         prk::settings::Install();
@@ -69,7 +72,7 @@ DWORD WINAPI InitThread(void*)
             prk::nameplates::OnConfigChanged();
         }
         prk::game::UpdateViewportSize();
-        prk::nameplates::Tick();
+        prk::wndproc::Tick();
         prk::settings::Flush();
     }
 }

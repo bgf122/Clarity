@@ -10,6 +10,7 @@
 
 #include "../../core/config.h"
 #include "../../core/log.h"
+#include "../../core/wndproc.h"
 
 #include <cstdint>
 
@@ -106,6 +107,18 @@ void Show()
     Log("[ui] interface shown");
 }
 
+// The game window's messages: the key toggles, and still reaches the game.
+bool OnMessage(HWND /*hwnd*/, UINT msg, WPARAM wp, LPARAM lp, LRESULT* /*result*/)
+{
+    if (!KeyMatches(Cfg().ui.hideUi, msg, wp, lp))
+        return false;
+    if (g_hidden)
+        Show();
+    else
+        Hide();
+    return false;
+}
+
 } // namespace
 
 bool Install()
@@ -118,19 +131,10 @@ bool Install()
         g_wcSpriteVtable = reinterpret_cast<void*>(GetProcAddress(gui, "??_7WindowController_c@@6BRenderSpriteBase_t@@@"));
     }
     const bool ok = g_spriteSystem && g_windowController && g_wcSpriteVtable;
+    if (ok)
+        wndproc::Add(&OnMessage);
     Log("[ui] hide-interface key %s", ok ? "ready" : "unavailable: exports missing");
     return ok;
-}
-
-bool HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
-{
-    if (!g_wcSpriteVtable || !KeyMatches(Cfg().ui.hideUi, msg, wp, lp))
-        return false;
-    if (g_hidden)
-        Show();
-    else
-        Hide();
-    return true;
 }
 
 } // namespace prk::hideui

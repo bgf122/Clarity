@@ -16,7 +16,7 @@
 #include "../../core/signatures.h"
 #include "../../core/text_raster.h"
 #include "../../core/threat.h"
-#include "../hideui/hideui.h"
+#include "../../core/wndproc.h"
 
 #include <windows.h>
 
@@ -90,6 +90,7 @@ struct Plate {
     float rightSign = 1.0f;     // quad x towards the screen's right (the texture's left edge has u = 0)
     Kind kind = Kind::Player;
     std::vector<uint32_t> text; // ARGB without the health bar
+    std::vector<uint32_t> px;   // the texture as last sent: text + brackets + bar + label + level
     float nameCap = 30.0f;      // texels, what MinPx/MaxPx refer to
     int anchorRow = kTexH;      // texel row placed at the game's anchor (above the head)
     float nameMidRow = 0.0f;    // Classic: texel row of the middle of the name's capitals
@@ -163,9 +164,6 @@ using GetMouseWindowFn = void*(__thiscall*)(void* self);
 SetTargetFn g_setTarget = nullptr;            // TargetingModule_t::SetTarget
 InstanceFn g_windowController = nullptr;      // WindowController_c::GetInstanceIfAny
 GetMouseWindowFn g_getMouseWindow = nullptr;  // WindowController_c::GetMouseWindow (+0x190)
-WNDPROC g_prevWndProc = nullptr;
-HWND g_clickWnd = nullptr;
-bool g_unicodeWnd = false;
 bool g_swallowUp = false;
 DWORD g_gameThread = 0;
 constexpr int kTargetingScanTimer = 0x0C;
@@ -184,7 +182,7 @@ constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes betwee
 constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
 constexpr float kEdgeMarginPx = 8.0f;     // target plates kept this far inside the window edges
 constexpr float kFirstPersonRadius = 1.5f; // your own plate's anchor this close to the camera = first person
-constexpr int kBlinkSteps = 6;         // painted strengths (each change re-uploads the texture)
+constexpr int kBlinkSteps = 6;         // painted strengths (each change repaints and sends the brackets' area)
 constexpr float kBlinkLow = 0.25f;     // faintest strength
 raster::Font g_nameFont, g_smallFont, g_pctFont, g_levelFont, g_classicFont;
 bool g_fontsTried = false;
@@ -447,7 +445,7 @@ bool EnsureFonts()
     return g_fontsOk;
 }
 
-void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb);
+void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb, const RECT* clip = nullptr);
 void Composite(std::vector<uint32_t>& px, const Canvas& c);
 
 // Fills a rectangle (texels) of a mask whose (0, 0) is texel (ox, oy).
@@ -712,25 +710,41 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     p.barRgb = 0;
 }
 
-void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb)
+// Within the texture and, if given, within clip.
+RECT ClipRect(const RECT* clip)
 {
-    for (int y = std::max(0, y0); y < std::min(kTexH, y0 + h); ++y)
-        for (int x = std::max(0, x0); x < std::min(kTexW, x0 + w); ++x)
+    RECT r{0, 0, kTexW, kTexH};
+    if (clip) {
+        r.left = std::max(r.left, clip->left);
+        r.top = std::max(r.top, clip->top);
+        r.right = std::min(r.right, clip->right);
+        r.bottom = std::min(r.bottom, clip->bottom);
+    }
+    return r;
+}
+
+void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t argb, const RECT* clip)
+{
+    const RECT c = ClipRect(clip);
+    for (int y = std::max<int>(c.top, y0); y < std::min<int>(c.bottom, y0 + h); ++y)
+        for (int x = std::max<int>(c.left, x0); x < std::min<int>(c.right, x0 + w); ++x)
             px[static_cast<size_t>(y) * kTexW + x] = argb;
 }
 
 // Straight-alpha "over" of one colour through a mask onto ARGB pixels, touching only the mask's
-// box (the blinking brackets repaint just that much).
-void OverMask(std::vector<uint32_t>& px, int x0, int y0, const raster::Mask& m, uint32_t rgb, float alpha)
+// box (and clip).
+void OverMask(std::vector<uint32_t>& px, int x0, int y0, const raster::Mask& m, uint32_t rgb, float alpha,
+              const RECT* clip = nullptr)
 {
+    const RECT c = ClipRect(clip);
     for (int y = 0; y < m.h; ++y) {
         const int ty = y0 + y;
-        if (ty < 0 || ty >= kTexH)
+        if (ty < c.top || ty >= c.bottom)
             continue;
         for (int x = 0; x < m.w; ++x) {
             const int tx = x0 + x;
             const float sa = m.a[static_cast<size_t>(y) * m.w + x] * alpha;
-            if (tx < 0 || tx >= kTexW || sa <= 0.0f)
+            if (tx < c.left || tx >= c.right || sa <= 0.0f)
                 continue;
             uint32_t& d = px[static_cast<size_t>(ty) * kTexW + tx];
             const float da = (d >> 24) / 255.0f;
@@ -770,40 +784,111 @@ void Composite(std::vector<uint32_t>& px, const Canvas& c)
     }
 }
 
-// Text + health bar -> texture. Bar: the game's consider colour on its 0x333333 track, black
-// border, health percentage centred inside. `tenths` is 0..1000 (percent x 10), -1 = unknown.
-void Upload(Plate& p, int tenths, uint32_t barRgb)
+// Outlined, shadowed text (as DrawText) straight onto the pixels, only inside clip.
+void DrawTextPx(std::vector<uint32_t>& px, const raster::Font& font, const std::wstring& s, float x, float y, uint32_t rgb,
+                const RECT& clip)
 {
-    std::vector<uint32_t> px = p.text;
+    if (s.empty())
+        return;
+    const int w = static_cast<int>(std::ceil(font.TextWidth(s.c_str(), static_cast<int>(s.size())))) + 2 * kPad;
+    const int h = static_cast<int>(std::ceil(font.Height())) + 2 * kPad;
+    const raster::Mask fill = raster::Rasterize(font, s.c_str(), static_cast<int>(s.size()), kPad, kPad, w, h);
+    const raster::Mask outline = raster::Dilate(fill, g_outline);
+    raster::Mask edge = outline;
+    const raster::Mask shadow = raster::Shadow(outline, g_shadowOffset, g_shadowBlur);
+    for (size_t i = 0; i < edge.a.size(); ++i)
+        edge.a[i] = std::max(outline.a[i], kShadowAlpha * shadow.a[i]);
+    const int x0 = static_cast<int>(std::lround(x)) - kPad;
+    const int y0 = static_cast<int>(std::lround(y)) - kPad;
+    OverMask(px, x0, y0, edge, 0x000000, 1.0f, &clip);
+    OverMask(px, x0, y0, fill, rgb, 1.0f, &clip);
+}
+
+// The texels each changing part covers.
+RECT BarArea(const Plate& p)
+{
+    if (p.barY < 0)
+        return {};
+    const int x0 = (kTexW - p.barW) / 2;
+    return {x0 - p.barBorder, p.barY - p.barBorder, x0 + p.barW + p.barBorder, p.barY + p.barH + p.barBorder};
+}
+
+RECT LevelArea(const Plate& p)
+{
+    if (p.level.empty())
+        return {};
+    const float w = g_levelFont.TextWidth(p.level.c_str(), static_cast<int>(p.level.size()));
+    const int x0 = static_cast<int>(std::floor(p.levelX)) - kPad, y0 = static_cast<int>(std::floor(p.levelY)) - kPad;
+    return {x0, y0, x0 + static_cast<int>(std::ceil(w)) + 2 * kPad + 1, y0 + static_cast<int>(std::ceil(g_levelFont.Height())) + 2 * kPad + 1};
+}
+
+RECT BracketArea(const Plate& p)
+{
+    if (p.atkOutline.a.empty())
+        return {};
+    return {p.atkX, p.atkY, p.atkX + p.atkOutline.w, p.atkY + p.atkOutline.h};
+}
+
+RECT Union(const RECT& a, const RECT& b)
+{
+    if (a.right <= a.left || a.bottom <= a.top)
+        return b;
+    if (b.right <= b.left || b.bottom <= b.top)
+        return a;
+    return {std::min(a.left, b.left), std::min(a.top, b.top), std::max(a.right, b.right), std::max(a.bottom, b.bottom)};
+}
+
+// Repaints `area` of the plate (from the text, then the brackets, bar, label and level over it) and
+// sends just that part of the texture. Bar: the game's consider colour on its 0x333333 track, black
+// border, health percentage centred inside.
+void Repaint(Plate& p, RECT area)
+{
+    area = ClipRect(&area);
+    if (area.right <= area.left || area.bottom <= area.top)
+        return;
+    if (p.px.size() != p.text.size())
+        p.px = p.text;
+    for (int y = area.top; y < area.bottom; ++y) {
+        const size_t row = static_cast<size_t>(y) * kTexW;
+        std::copy(p.text.begin() + row + area.left, p.text.begin() + row + area.right, p.px.begin() + row + area.left);
+    }
+    std::vector<uint32_t>& px = p.px;
     if (p.atkLevel > 0 && !p.atkFill.a.empty()) {
         const float strength = static_cast<float>(p.atkLevel) / kBlinkSteps;
-        OverMask(px, p.atkX, p.atkY, p.atkOutline, 0x000000, 0.9f * strength);
-        OverMask(px, p.atkX, p.atkY, p.atkFill, 0xFF2A2A, strength);
+        OverMask(px, p.atkX, p.atkY, p.atkOutline, 0x000000, 0.9f * strength, &area);
+        OverMask(px, p.atkX, p.atkY, p.atkFill, 0xFF2A2A, strength, &area);
     }
+    const int tenths = p.hpPct;
     if (p.barY >= 0 && tenths >= 0) {
         const int x0 = (kTexW - p.barW) / 2;
-        FillRect(px, x0 - p.barBorder, p.barY - p.barBorder, p.barW + 2 * p.barBorder, p.barH + 2 * p.barBorder, 0xF0000000);
-        FillRect(px, x0, p.barY, p.barW, p.barH, 0xFF333333);
-        FillRect(px, x0, p.barY, p.barW * tenths / 1000, p.barH, 0xFF000000 | barRgb);
+        FillRect(px, x0 - p.barBorder, p.barY - p.barBorder, p.barW + 2 * p.barBorder, p.barH + 2 * p.barBorder, 0xF0000000, &area);
+        FillRect(px, x0, p.barY, p.barW, p.barH, 0xFF333333, &area);
+        FillRect(px, x0, p.barY, p.barW * tenths / 1000, p.barH, 0xFF000000 | p.barRgb, &area);
+        if (p.barLabel) {
+            wchar_t label[16];
+            swprintf_s(label, L"%d.%d%%", tenths / 10, tenths % 10);
+            const float w = g_pctFont.TextWidth(label, static_cast<int>(wcslen(label)));
+            DrawTextPx(px, g_pctFont, label, (kTexW - w) * 0.5f, p.barY + (p.barH - g_pctFont.Height()) * 0.5f, 0xFFFFFF, area);
+        }
     }
-    if (p.barY >= 0 && tenths >= 0 && p.barLabel) {
+    if (!p.level.empty())
+        DrawTextPx(px, g_levelFont, p.level, p.levelX, p.levelY, p.barRgb, area);
+    if (!game::ModifyVisualMaterial(p.vm, px.data(), kTexW, area))
+        game::WriteTexture(game::VisualMaterialTexture(p.vm), px.data(), kTexW, kTexH);
+}
 
-        wchar_t label[16];
-        swprintf_s(label, L"%d.%d%%", tenths / 10, tenths % 10);
-        const int len = static_cast<int>(wcslen(label));
-        Canvas c;
-        const float w = g_pctFont.TextWidth(label, len);
-        DrawText(c, g_pctFont, label, (kTexW - w) * 0.5f, p.barY + (p.barH - g_pctFont.Height()) * 0.5f, 0xFFFFFF);
-        Composite(px, c);
-    }
-    if (!p.level.empty()) {
-        Canvas c;
-        DrawText(c, g_levelFont, p.level, p.levelX, p.levelY, barRgb);
-        Composite(px, c);
-    }
-    game::WriteTexture(game::VisualMaterialTexture(p.vm), px.data(), kTexW, kTexH);
+// New bar values: the whole plate after a new layout (`full`), else just the bar and the level.
+// `tenths` is 0..1000 (percent x 10), -1 = unknown.
+void Upload(Plate& p, int tenths, uint32_t barRgb, bool full)
+{
     p.hpPct = tenths;
     p.barRgb = barRgb;
+    if (full || p.px.size() != p.text.size()) {
+        p.px = p.text;
+        Repaint(p, RECT{0, 0, kTexW, kTexH});
+        return;
+    }
+    Repaint(p, Union(BarArea(p), LevelArea(p)));
 }
 
 // Health in tenths of a percent (health capped at max, max >= 1, as the game's bar does).
@@ -856,23 +941,8 @@ bool BarChanged(const Plate& p, const game::Identity& id, int* tenths, uint32_t*
 {
     if (p.barY < 0 && p.level.empty())
         return false;
-    // Classic: the game's consider colours (by level difference, grey for those it can't rate). Or one
-    // colour for everyone, or by health: green at full health, yellow at half, red at none.
-    const NameplateConfig& cfg = Cfg().np;
     *tenths = p.barY >= 0 ? HealthTenths(id) : -1;
-    if (cfg.barColor == 1) {
-        *rgb = HueRgb(cfg.barHue);
-    } else if (cfg.barColor == 2) {
-        const int health = *tenths >= 0 ? *tenths : HealthTenths(id);
-        *rgb = HueRgb(120.0f * std::clamp(health, 0, 1000) / 1000.0f);
-    } else {
-        bool considerable = false;
-        *rgb = ConsiderRgb(id, &considerable);
-        if (!considerable)
-            *rgb = 0xAAAAAA; // the game's grey for those it can't rate (e.g. other players), as it is
-    }
-    if (*rgb != 0xAAAAAA)
-        *rgb = Soften(*rgb);
+    *rgb = HealthBarRgb(id, *tenths);
     return *tenths != p.hpPct || *rgb != p.barRgb;
 }
 
@@ -1176,7 +1246,7 @@ void Build(uint8_t* ind)
         int pct = -1;
         uint32_t rgb = 0;
         BarChanged(p, id, &pct, &rgb);
-        Upload(p, pct, rgb);
+        Upload(p, pct, rgb, true);
     }
     p.version = g_version.load();
     game::SwapSpriteMaterial(sprite, game::VisualMaterialMaterial(p.vm));
@@ -1295,9 +1365,9 @@ int __fastcall Hook_Update(uint8_t* ind)
     if (rerender) {
         RenderText(p, id, ind);
         BarChanged(p, id, &pct, &rgb);
-        Upload(p, pct, rgb);
+        Upload(p, pct, rgb, true);
     } else if (BarChanged(p, id, &pct, &rgb)) {
-        Upload(p, pct, rgb);
+        Upload(p, pct, rgb, false);
     }
 
     // Attacking us: the red brackets, blinking slowly (full when the attack starts, fading to faint
@@ -1312,7 +1382,7 @@ int __fastcall Hook_Update(uint8_t* ind)
         }
         if (level != p.atkLevel) {
             p.atkLevel = level;
-            Upload(p, p.hpPct, p.barRgb);
+            Repaint(p, BracketArea(p));
         }
     }
 
@@ -1544,9 +1614,8 @@ uint8_t* PlateAt(int x, int y)
     return best;
 }
 
-LRESULT CALLBACK ClickWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+bool HandleClick(HWND /*hwnd*/, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
 {
-    hideui::HandleMessage(msg, wp, lp); // (the key still reaches the game)
     const NameplateConfig& cfg = Cfg().np;
     if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) && cfg.enable && cfg.clickToTarget &&
         GetCurrentThreadId() == g_gameThread && g_setTarget && !(wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL))) {
@@ -1559,16 +1628,17 @@ LRESULT CALLBACK ClickWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 g_swallowUp = true;
                 if (Cfg().fct.debug)
                     Log("[np] click selected %u:%u", id.type, id.instance);
-                return 0;
+                *result = 0;
+                return true;
             }
         }
     }
     if (msg == WM_LBUTTONUP && g_swallowUp) {
         g_swallowUp = false;
-        return 0;
+        *result = 0;
+        return true;
     }
-    return g_unicodeWnd ? CallWindowProcW(g_prevWndProc, hwnd, msg, wp, lp)
-                        : CallWindowProcA(g_prevWndProc, hwnd, msg, wp, lp);
+    return false;
 }
 
 } // namespace
@@ -1578,18 +1648,31 @@ void OnConfigChanged()
     g_version.fetch_add(1);
 }
 
-void Tick()
+uint32_t HealthBarRgb(const game::Identity& id, int tenths)
 {
-    HWND hwnd = game::GameWindow();
-    if (!hwnd || hwnd == g_clickWnd || !g_setTarget)
-        return;
-    // Chain onto whatever window procedure is there now (the game's, or another mod's).
-    g_unicodeWnd = IsWindowUnicode(hwnd) != FALSE;
-    g_clickWnd = hwnd;
-    const LONG_PTR proc = reinterpret_cast<LONG_PTR>(&ClickWndProc);
-    g_prevWndProc = reinterpret_cast<WNDPROC>(g_unicodeWnd ? SetWindowLongPtrW(hwnd, GWLP_WNDPROC, proc)
-                                                           : SetWindowLongPtrA(hwnd, GWLP_WNDPROC, proc));
-    Log("[np] click-to-target on window %p (previous wndproc %p)", hwnd, g_prevWndProc);
+    // Classic: the game's consider colours (by level difference, grey for those it can't rate). Or one
+    // colour for everyone, or by health: green at full health, yellow at half, red at none.
+    const NameplateConfig& cfg = Cfg().np;
+    uint32_t rgb;
+    if (cfg.barColor == 1) {
+        rgb = HueRgb(cfg.barHue);
+    } else if (cfg.barColor == 2) {
+        const int health = tenths >= 0 ? tenths : HealthTenths(id);
+        rgb = HueRgb(120.0f * std::clamp(health, 0, 1000) / 1000.0f);
+    } else {
+        bool considerable = false;
+        rgb = ConsiderRgb(id, &considerable);
+        if (!considerable)
+            return 0xAAAAAA; // the game's grey for those it can't rate (e.g. other players), as it is
+    }
+    return Soften(rgb);
+}
+
+uint32_t ConsiderTextRgb(const game::Identity& id)
+{
+    bool considerable = false;
+    const uint32_t rgb = ConsiderRgb(id, &considerable);
+    return considerable ? rgb : 0xFFFFFF;
 }
 
 bool PlateTop(uint32_t type, uint32_t instance, float* top)
@@ -1618,6 +1701,8 @@ bool Install()
         g_getMouseWindow = reinterpret_cast<GetMouseWindowFn>(GetProcAddress(gui, "?GetMouseWindow@WindowController_c@@QAEPAVWindow@@XZ"));
         if (!g_setTarget || !g_windowController || !g_getMouseWindow)
             Log("[np] click-to-target exports missing - disabled");
+        else
+            wndproc::Add(&HandleClick);
 
         g_handleNametags = reinterpret_cast<uint8_t*>(GetProcAddress(gui, "?HandleNametags@TargetingModule_t@@AAEXXZ"));
         void** slot = FindImportSlot(gui, "?N3Msg_GetDynelsInVicinity@");

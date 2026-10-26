@@ -53,6 +53,7 @@ using DeltaStateCtorFn = void*(__thiscall*)(void* self, const char* name);
 using SetDeltaStateFn = void(__thiscall*)(void* self, void* state);
 
 using VisualMaterialCtorFn = void*(__thiscall*)(void* self, int w, int h, void* data, int format, char* name);
+using VisualMaterialModifyFn = void(__thiscall*)(void* self, const void* data, int pitch, int format, RECT* rect);
 using ThisVoidFn = void(__thiscall*)(void* self);
 using CrtDeleteFn = void(__cdecl*)(void*);
 constexpr int kDynelIdentity = 0x14;     // n3Dynel_t: Identity_t (n3Dynel_t::PutInDir)
@@ -87,6 +88,7 @@ CrtNewFn g_crtNew = nullptr;
 DeltaStateCtorFn g_deltaStateCtor = nullptr;
 SetDeltaStateFn g_materialSetDeltaState = nullptr;
 VisualMaterialCtorFn g_visualMaterialCtor = nullptr;
+VisualMaterialModifyFn g_visualMaterialModify = nullptr;
 ThisVoidFn g_visualMaterialDtor = nullptr;
 ThisVoidFn g_spriteSetInvisible = nullptr;
 CrtDeleteFn g_crtDelete = nullptr;
@@ -151,6 +153,8 @@ bool Init()
     g_getClientInst = reinterpret_cast<GetClientInstFn>(Export("Interfaces.dll", "?GetClientInst@N3InterfaceModule_t@@QBEIXZ"));
     g_visualMaterialCtor = reinterpret_cast<VisualMaterialCtorFn>(Export("DisplaySystem.dll", "??0VisualMaterial_t@@QAE@HHPAXW4_D3DX_SURFACEFORMAT@@PAD@Z"));
     g_visualMaterialDtor = reinterpret_cast<ThisVoidFn>(Export("DisplaySystem.dll", "??1VisualMaterial_t@@QAE@XZ"));
+    g_visualMaterialModify = reinterpret_cast<VisualMaterialModifyFn>(
+        Export("DisplaySystem.dll", "?Modify@VisualMaterial_t@@QAEXPBXHW4_D3DX_SURFACEFORMAT@@PAUtagRECT@@@Z"));
     g_spriteSetInvisible = reinterpret_cast<ThisVoidFn>(Export("DisplaySystem.dll", "?SetInvisible@VisualSprite_t@@QAEXXZ"));
     g_crtDelete = reinterpret_cast<CrtDeleteFn>(Export("msvcr100.dll", "??3@YAXPAX@Z"));
     g_deltaStateCtor = reinterpret_cast<DeltaStateCtorFn>(Export("randy31.dll", "??0RDeltaState@@QAE@PBD@Z"));
@@ -459,6 +463,15 @@ void DestroyVisualMaterial(void* vm)
 void* VisualMaterialMaterial(void* vm)
 {
     return static_cast<void**>(vm)[0];
+}
+
+bool ModifyVisualMaterial(void* vm, const uint32_t* pixels, int width, const RECT& rect)
+{
+    if (!g_visualMaterialModify || !vm || rect.right <= rect.left || rect.bottom <= rect.top)
+        return false;
+    RECT r = rect;
+    g_visualMaterialModify(vm, pixels + static_cast<size_t>(rect.top) * width + rect.left, width * 4, kD3DX_SF_A8R8G8B8, &r);
+    return true;
 }
 
 void* VisualMaterialTexture(void* vm)

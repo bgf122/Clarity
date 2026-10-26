@@ -20,6 +20,9 @@ namespace {
 
 // --- the settings shown on the page -------------------------------------------------------
 
+// The Clarity tab's pages.
+constexpr int kPageFct = 0, kPageNameplates = 1, kPageBars = 2, kPageCount = 3;
+
 struct Item {
     const char* var;       // DValue name
     const wchar_t* key;    // key in Clarity.ini
@@ -36,17 +39,28 @@ struct Item {
     int group = -1;        // combat-log category index (kCombatGroups), instead of a field
     const char* const* choices = nullptr; // radio buttons (values 0, 1, ...), null-terminated labels ...
     int NameplateConfig::*npInt = nullptr; // ... for this field
+    bool BarsConfig::*brBool = nullptr;    // Bars page
+    float BarsConfig::*brFloat = nullptr;
+    int BarsConfig::*brInt = nullptr;      // (radio buttons)
 
     const wchar_t* IniSection() const
     {
         if (group >= 0)
             return L"CombatLog";
-        return Nameplates() ? L"Nameplates" : L"FloatingText";
+        static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars"};
+        return kSections[Page()];
     }
-    bool Nameplates() const { return npBool || npFloat || npInt; }
-    double Current() const
+    int Page() const { return (brBool || brFloat || brInt) ? kPageBars : (npBool || npFloat || npInt) ? kPageNameplates : kPageFct; }
+    double Current() const { return Value(Cfg()); }
+    double Default() const
     {
-        const Config& c = Cfg();
+        static const Config d{};
+        if (group >= 0)
+            return kCombatGroups[group].show ? 1.0 : 0.0;
+        return Value(d);
+    }
+    double Value(const Config& c) const
+    {
         if (group >= 0)
             return c.fct.showGroup[group] ? 1.0 : 0.0;
         if (boolField)
@@ -57,22 +71,13 @@ struct Item {
             return c.np.*npBool ? 1.0 : 0.0;
         if (npInt)
             return c.np.*npInt;
-        return c.np.*npFloat;
-    }
-    double Default() const
-    {
-        static const Config d{};
-        if (group >= 0)
-            return kCombatGroups[group].show ? 1.0 : 0.0;
-        if (boolField)
-            return d.fct.*boolField ? 1.0 : 0.0;
-        if (floatField)
-            return d.fct.*floatField;
-        if (npBool)
-            return d.np.*npBool ? 1.0 : 0.0;
-        if (npInt)
-            return d.np.*npInt;
-        return d.np.*npFloat;
+        if (npFloat)
+            return c.np.*npFloat;
+        if (brBool)
+            return c.bars.*brBool ? 1.0 : 0.0;
+        if (brInt)
+            return c.bars.*brInt;
+        return c.bars.*brFloat;
     }
 };
 
@@ -82,9 +87,14 @@ struct Item {
 #define NF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, &NameplateConfig::field, lo, hi, fmt, scale
 #define G true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1
 #define NR false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1 // radio buttons: choices + npInt follow
+// Bars page: the field goes last, after section, group, choices and npInt.
+#define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, &BarsConfig::field
+#define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, &BarsConfig::field
+#define BR(field, choices) false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1, nullptr, -1, choices, nullptr, nullptr, nullptr, &BarsConfig::field
 
 const char* const kNpStyles[] = {"Modern", "Classic (the game's look)", nullptr};
 const char* const kBarColors[] = {"Classic (by level)", "Single colour", "By health", nullptr};
+const char* const kBarNumbers[] = {"Amount", "Percentage", "Both", nullptr};
 
 const Item kItems[] = {
     {"CLR_FctEnable", L"Enable", "Improved floating combat text (off = the game's original)", B(enable), "Floating combat text"},
@@ -148,6 +158,13 @@ const Item kItems[] = {
     {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
     {"CLR_NpShowSelf", L"ShowSelf", "Nameplate for your own character", NB(showSelf), nullptr},
+
+    {"CLR_BarsEnable", L"Enable", "Clarity bars (off = the game's health, nano and target bars)", BB(enable)},
+    {"CLR_BarsNumbers", L"Numbers", "Numbers on the bars:", BR(numbers, kBarNumbers)},
+    {"CLR_BarsShowTarget", L"ShowTarget", "Bars for your fight target and nano target", BB(showTarget)},
+    {"CLR_BarsLocked", L"Locked", "Lock the bars in place (off = drag a bar to move it)", BB(locked)},
+    {"CLR_BarsTrail", L"Trail", "Show health just lost as a light segment that shrinks away", BB(trail)},
+    {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 
@@ -157,18 +174,22 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef NF
 #undef G
 #undef NR
+#undef BB
+#undef BF
+#undef BR
 
 // Latest value per item from the GUI, written to the INI by Flush() on the init thread.
 std::atomic<bool> g_dirty[kItemCount];
 std::atomic<double> g_value[kItemCount];
 
-// "Settings: Default / Custom" at the top of each page (0 floating text, 1 nameplates). Choosing Default
+// "Settings: Default / Custom" at the top of each page (kPage*). Choosing Default
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
-const char* const kPresetVars[2] = {"CLR_PresetFct", "CLR_PresetNp"};
+const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", "CLR_PresetNp", "CLR_PresetBars"};
+const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "bars"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
-std::atomic<bool> g_resetPage[2];  // Default chosen: Flush() resets the page
-std::atomic<bool> g_customPage[2]; // a setting changed: Flush() shows Custom
+std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
+std::atomic<bool> g_customPage[kPageCount]; // a setting changed: Flush() shows Custom
 thread_local bool t_resetting = false; // Flush() is setting the defaults (not a user change)
 
 // --- Utils.dll (DistributedValue) -----------------------------------------------------------
@@ -270,10 +291,10 @@ void Register(const Item& item, double value)
 }
 
 // Whether every setting on the page is at its default (ini values are saved with 3 significant digits).
-bool PageAtDefaults(bool nameplates)
+bool PageAtDefaults(int page)
 {
     for (const Item& item : kItems) {
-        if (item.Nameplates() != nameplates)
+        if (item.Page() != page)
             continue;
         const double d = item.Default();
         if (std::fabs(item.Current() - d) > 1e-3 * std::max(1.0, std::fabs(d)))
@@ -319,7 +340,7 @@ void __fastcall OnDValueChanged(void* /*self*/, void* /*edx*/, const void* name,
     const char* n = StringCStr(name);
     if (!n || strncmp(n, "CLR_", 4) != 0)
         return;
-    for (int page = 0; page < 2; ++page) {
+    for (int page = 0; page < kPageCount; ++page) {
         if (strcmp(n, kPresetVars[page]) == 0) {
             if (!t_resetting && static_cast<int>(VariantAsDouble(value) + 0.5) == kPresetDefault)
                 g_resetPage[page].store(true); // handled by Flush(), outside the DValue lock
@@ -332,7 +353,7 @@ void __fastcall OnDValueChanged(void* /*self*/, void* /*edx*/, const void* name,
             g_value[i].store(v);
             g_dirty[i].store(true);
             if (!t_resetting)
-                g_customPage[kItems[i].Nameplates() ? 1 : 0].store(true);
+                g_customPage[kItems[i].Page()].store(true);
             return;
         }
     }
@@ -377,7 +398,7 @@ bool CreateObserver()
 
 // One page of the options tab: the window turns "Clarity/<page>" labels into a Clarity folder
 // with a page per label (OptionWindow loader splits labels on '/').
-void AppendPage(std::string& x, const char* page, const char* scrollName, bool nameplates)
+void AppendPage(std::string& x, const char* page, const char* scrollName, int pageIndex)
 {
     x += "\r\n  <ScrollView h_alignment=\"LEFT\" label=\"Clarity/";
     x += page;
@@ -392,7 +413,7 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, bool n
     x += "\" font=\"HUGE\" layout_borders=\"Rect(0,0,0,5)\" />\r\n"
          "        <TextView value=\"Changes apply at once. Settings are saved to Clarity.ini (fonts and colours are set there).\" font=\"LARGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n"
          "        <OptionRadioButtonGroup label=\"Settings:\" layout_borders=\"Rect(10,0,0,5)\" opt_type=\"variant\" opt_variable=\"";
-    x += kPresetVars[nameplates ? 1 : 0];
+    x += kPresetVars[pageIndex];
     x += "\">\r\n";
     for (int c = 0; kPresetChoices[c]; ++c) {
         char value[16];
@@ -405,9 +426,9 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, bool n
     }
     x += "        </OptionRadioButtonGroup>\r\n";
     for (const Item& item : kItems) {
-        if (item.Nameplates() != nameplates)
+        if (item.Page() != pageIndex)
             continue;
-        if (item.section && !nameplates) {
+        if (item.section && pageIndex == kPageFct) {
             x += "        <TextView value=\"";
             x += item.section;
             x += "\" font=\"LARGE\" layout_borders=\"Rect(0,10,0,3)\" />\r\n";
@@ -457,8 +478,9 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, bool n
 std::string TabXml()
 {
     std::string x;
-    AppendPage(x, "Floating Combat Text", "clarity_fct_scroll", false);
-    AppendPage(x, "Nameplates", "clarity_np_scroll", true);
+    AppendPage(x, "Floating Combat Text", "clarity_fct_scroll", kPageFct);
+    AppendPage(x, "Nameplates", "clarity_np_scroll", kPageNameplates);
+    AppendPage(x, "Bars", "clarity_bars_scroll", kPageBars);
     return x;
 }
 
@@ -610,8 +632,8 @@ bool Install()
 
     for (const Item& item : kItems)
         Register(item, item.Current());
-    for (int page = 0; page < 2; ++page)
-        RegisterPreset(kPresetVars[page], PageAtDefaults(page == 1) ? kPresetDefault : kPresetCustom);
+    for (int page = 0; page < kPageCount; ++page)
+        RegisterPreset(kPresetVars[page], PageAtDefaults(page) ? kPresetDefault : kPresetCustom);
     if (!CreateObserver()) {
         Log("[settings] observer creation failed - options tab disabled");
         return false;
@@ -630,20 +652,20 @@ void Flush()
 {
     // Default chosen: each setting on the page back to its default through its DValue, so the window
     // shows it and the observer queues it for Clarity.ini below.
-    for (int page = 0; page < 2; ++page) {
+    for (int page = 0; page < kPageCount; ++page) {
         if (!g_resetPage[page].exchange(false))
             continue;
         t_resetting = true;
         for (const Item& item : kItems) {
-            if (item.Nameplates() == (page == 1))
+            if (item.Page() == page)
                 SetValue(item.var, item.Default(), item.isBool, item.choices != nullptr);
         }
         t_resetting = false;
         g_customPage[page].store(false);
-        Log("[settings] %s reset to defaults", page == 1 ? "nameplates" : "floating text");
+        Log("[settings] %s reset to defaults", kPageNames[page]);
     }
     // A setting changed by hand: the page is Custom now.
-    for (int page = 0; page < 2; ++page) {
+    for (int page = 0; page < kPageCount; ++page) {
         if (g_customPage[page].exchange(false)) {
             t_resetting = true; // (not a choice of Default either way)
             SetValue(kPresetVars[page], kPresetCustom, false, true);

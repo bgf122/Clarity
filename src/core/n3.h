@@ -45,6 +45,10 @@ bool FightTarget(game::Identity* out);
 // puts every selection. False if none.
 bool SelectedTarget(game::Identity* out);
 
+// Whom `target` is targeting: N3Msg_GetTargetTarget, as the game's target control shows it
+// (CCTargetControl_c, GUI 0x10073B9E). False if none.
+bool TargetOf(const game::Identity& target, game::Identity* out);
+
 // GUI FontSystem_t::GetColor(ColorCode_e): the RGB the text renderer uses for a colour code.
 uint32_t ColorOf(int colorCode);
 

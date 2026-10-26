@@ -35,6 +35,8 @@ using GetColorFn = int(__thiscall*)(void* self, int code);
 using GetPosFn = bool(__thiscall*)(void* self, const game::Identity& id, game::Vec3& out);
 using GetAttackingFn = bool(__thiscall*)(void* self, game::Identity& out);
 using CurrentTargetFn = game::Identity*(__thiscall*)(void* self, game::Identity* ret);
+using TargetTargetFn = game::Identity*(__thiscall*)(void* self, game::Identity* ret, game::Identity& target);
+TargetTargetFn g_targetTarget;
 GetPosFn g_getPos;
 GetAttackingFn g_getAttacking;
 InstanceFn g_inputConfig;
@@ -88,6 +90,7 @@ bool Init()
     Resolve(g_getAttacking, "Interfaces.dll", "?N3Msg_GetAttackingID@N3InterfaceModule_t@@QBE_NAAVIdentity_t@@@Z");
     Resolve(g_inputConfig, "GUI.dll", "?GetInstance@InputConfig_t@@SAPAV1@XZ");
     Resolve(g_currentTarget, "GUI.dll", "?GetCurrentTarget@InputConfig_t@@QBE?AVIdentity_t@@XZ");
+    Resolve(g_targetTarget, "Interfaces.dll", "?N3Msg_GetTargetTarget@N3InterfaceModule_t@@QAE?AVIdentity_t@@AAV2@@Z");
     return ok;
 }
 
@@ -164,6 +167,19 @@ bool SelectedTarget(game::Identity* out)
         return false;
     game::Identity id{0, 0};
     g_currentTarget(ic, &id);
+    if (id.type == 0 && id.instance == 0)
+        return false;
+    *out = id;
+    return true;
+}
+
+bool TargetOf(const game::Identity& target, game::Identity* out)
+{
+    void* m = Module();
+    if (!m || !g_targetTarget)
+        return false;
+    game::Identity in = target, id{0, 0};
+    g_targetTarget(m, &id, in);
     if (id.type == 0 && id.instance == 0)
         return false;
     *out = id;

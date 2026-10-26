@@ -2,6 +2,17 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.13
+
+### Bars
+- **Your target's target:** a small bar for whoever your nano target is targeting, which can be you.
+  - It shows its level, name and health like the other target bars.
+  - You can drag it anywhere.
+  - Turn it on or off with "Bar for your nano target's target" in Options > Clarity > Bars.
+
+### Nameplates
+- **Smoother in raids:** each nameplate's health bar is updated at most ten times a second, so many characters losing health at once no longer costs frames.
+
 ## 0.1.12
 
 ### New: health, nano and target bars

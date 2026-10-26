@@ -107,6 +107,7 @@ struct Plate {
     int atkX = 0, atkY = 0;
     int atkLevel = 0; // 0..kBlinkSteps
     int hpPct = -1;
+    DWORD barTick = 0;          // the bar last redrawn (kBarEveryMs)
     uint32_t barRgb = 0;
     unsigned version = 0;
     DWORD born = 0;          // for the fade-in
@@ -178,6 +179,7 @@ constexpr float kStackFallRate = 6.0f;  // 1/s: how fast it settles back down
 constexpr float kHeadFollow = 2.5f;    // 1/s: how fast the plate follows the head's height (walk bob is ~2-3 Hz)
 constexpr float kHeadSnap = 1.0f;      // metres: a bigger change in head height is taken at once
 constexpr DWORD kSightEveryMs = 100;   // line-of-sight test interval per plate
+constexpr DWORD kBarEveryMs = 100;     // a plate's health bar is redrawn at most this often
 constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes between
 constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
 constexpr float kEdgeMarginPx = 8.0f;     // target plates kept this far inside the window edges
@@ -1366,8 +1368,9 @@ int __fastcall Hook_Update(uint8_t* ind)
         RenderText(p, id, ind);
         BarChanged(p, id, &pct, &rgb);
         Upload(p, pct, rgb, true);
-    } else if (BarChanged(p, id, &pct, &rgb)) {
-        Upload(p, pct, rgb, false);
+    } else if (GetTickCount() - p.barTick >= kBarEveryMs && BarChanged(p, id, &pct, &rgb)) {
+        Upload(p, pct, rgb, false); // (at most every kBarEveryMs: in raids health changes all the time)
+        p.barTick = GetTickCount();
     }
 
     // Attacking us: the red brackets, blinking slowly (full when the attack starts, fading to faint

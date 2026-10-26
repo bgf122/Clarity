@@ -724,7 +724,8 @@ struct Panel {
 Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 480, 224};
 Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 480, 224};
 Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 480, 224};
-Panel* const g_panels[] = {&g_self, &g_fight, &g_nano};
+Panel g_tot{"nano target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 480, 224};
+Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot};
 bool g_nanoInFightPlace = false; // no fight target: the nano target is shown where the fight target's panel is
 
 void* g_wc = nullptr;          // the window controller the panels belong to
@@ -754,7 +755,7 @@ void Clamp(Panel& p, const GuiPoint& screen)
 
 // The panel's own place: the [Bars] position when it changed (start, Clarity.ini edited, a drag saved),
 // else the default - either side of the screen's middle, a little below it, the nano target under the
-// fight target.
+// fight target and the nano target's target right of it.
 void UpdateHome(Panel& p, const GuiPoint& screen, float k)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -770,6 +771,8 @@ void UpdateHome(Panel& p, const GuiPoint& screen, float k)
     }
     const float gap = 12.0f * k;
     p.homeX = &p == &g_self ? screen.x * 0.5f - gap - S(kBarWidth) * k : screen.x * 0.5f + gap;
+    if (&p == &g_tot)
+        p.homeX += S(kBarWidth + 4.0f) * k + gap;
     p.homeY = screen.y * 0.66f + (&p == &g_nano ? S(86) * k : 0.0f);
 }
 
@@ -1165,11 +1168,11 @@ void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, fl
     });
 }
 
-Trail g_fightTrail, g_nanoTrail;
+Trail g_fightTrail, g_nanoTrail, g_totTrail;
 
 // The fight target's panel; the nano target's panel smaller at its own place while there's a fight
 // target, else in the fight target's place at full size. One character as both: the fight target's
-// panel only.
+// panel only. The nano target's target (whoever it's targeting, maybe you) small at its own place.
 void UpdateTargets(HWND hwnd, DWORD now)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -1196,6 +1199,16 @@ void UpdateTargets(HWND hwnd, DWORD now)
     } else {
         Show(g_nano, false);
         g_nanoTrail.Update(0, -1, now, false);
+    }
+    if (g_disabled)
+        return;
+    game::Identity tot{};
+    Row totRow{};
+    if (hasNano && cfg.showTargetTarget && n3::TargetOf(nano, &tot) && MakeRow(tot, &totRow)) {
+        PresentTarget(g_tot, totRow, true, false, g_tot.homeX, g_tot.homeY, g_totTrail, hwnd, now);
+    } else {
+        Show(g_tot, false);
+        g_totTrail.Update(0, -1, now, false);
     }
 }
 

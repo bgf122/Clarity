@@ -26,6 +26,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
   - Your fight target's bar, with a slowly pulsing orange outline.
   - Your nano target's bar, a little smaller while you have a fight target; it takes the fight target's place when you don't.
+  - A small bar for whoever your nano target is targeting (which can be you).
   - Above each target bar, its level and name, coloured by how its level compares to yours.
   - On every bar: the amount, the percent, or both.
   - Drag a bar to move it. The game's own health, nano and target bars come back when you turn Clarity's off.

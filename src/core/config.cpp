@@ -176,11 +176,13 @@ const char kDefaultIni[] =
     "; Bars for your fight target and your nano target (the nano target's is smaller while you have a fight\n"
     "; target, and takes the fight target's place when you don't)\n"
     "ShowTarget=1\n"
+    "; A small bar for whom your nano target is targeting (maybe you)\n"
+    "ShowTargetTarget=1\n"
     "; 1 = the bars can't be dragged\n"
     "Locked=0\n"
     "; Health just lost shows as a light segment that shrinks away\n"
     "Trail=1\n"
-    "; Numbers on the bars: 0 = amount (8,412 / 12,950), 1 = percent, 2 = both (stacked)\n"
+    "; Numbers on the bars: 0 = amount (8,412 / 12,950), 1 = percent, 2 = both\n"
     "Numbers=2\n"
     "; Size (0.6-2)\n"
     "Scale=1\n"
@@ -191,6 +193,8 @@ const char kDefaultIni[] =
     "TargetY=-1\n"
     "NanoX=-1\n"
     "NanoY=-1\n"
+    "TotX=-1\n"
+    "TotY=-1\n"
     "\n"
     "[Interface]\n"
     "; Key that hides the game's interface (windows, chat, bars) and shows it again; nameplates and\n"
@@ -434,6 +438,9 @@ void LoadConfig()
         b.targetY = ReadFloat(p, bs, L"TargetY", db.targetY);
         b.nanoX = ReadFloat(p, bs, L"NanoX", db.nanoX);
         b.nanoY = ReadFloat(p, bs, L"NanoY", db.nanoY);
+        b.totX = ReadFloat(p, bs, L"TotX", db.totX);
+        b.totY = ReadFloat(p, bs, L"TotY", db.totY);
+        b.showTargetTarget = ReadFloat(p, bs, L"ShowTargetTarget", db.showTargetTarget) != 0.0f;
     }
 
     {

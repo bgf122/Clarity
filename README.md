@@ -13,7 +13,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
   - Readable plates over players, NPCs and pets: the full name centred over a health bar that stretches with it, the level in bold to the left in the bar's colour (classic level colours, one colour of your choice, or by health), and an org/title line, on a faint dark background (adjustable) so they stand out against bright scenery.
-  - Your selected (nano) target and your fight target get bold brackets (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range.
+  - Your selected (nano) target and your fight target get bold brackets (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
   - Optionally a plate over your own character (hidden in first person).
   - Characters attacking you get slowly blinking red brackets.
   - Classic style: the game's own look (name only, teal corners on your nano target, red on your fight target, a thin health bar on targets), drawn sharp at any size, with the same sizing, stacking and wall hiding.
@@ -26,10 +26,10 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
   - Your fight target's bar, with a slowly pulsing orange outline.
   - Your nano target's bar, a little smaller while you have a fight target; it takes the fight target's place when you don't.
-  - A small bar for whoever your nano target is targeting (which can be you).
+  - A small bar for whoever your fight target is targeting (which can be you).
   - Above each target bar, its level and name, coloured by how its level compares to yours.
   - On every bar: the amount, the percent, or both.
-  - Drag a bar to move it. The game's own health, nano and target bars come back when you turn Clarity's off.
+  - Drag a bar to move it. Once the bars are locked, click one to make that character your nano target. The game's own health, nano and target bars come back when you turn Clarity's off.
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
 ## Install

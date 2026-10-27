@@ -10,6 +10,9 @@
 // (when their own show condition, a CriteriaMonitor_c, says so) when the panels are turned off.
 //
 // Everything runs on the game thread, from a window timer in the game window's procedure.
+//
+// Unlocked, a panel is dragged with the left button; locked, a click on it selects whom it shows
+// (TargetingModule_t::SetTarget, as a click on the character).
 #include "bars.h"
 
 #include "../../core/config.h"
@@ -74,6 +77,7 @@ using EvaluateFn = bool(__thiscall*)(void* self);
 using WindowSizeLimitsFn = void(__thiscall*)(void* self, const GuiPoint* min, const GuiPoint* max);
 using GuiTextureFn = void*(__thiscall*)(void* self, int id, int format);
 using ReleaseTextureFn = void(__thiscall*)(void* self, void* sprite);
+using SetTargetFn = void(__cdecl*)(const game::Identity& id, bool forced);
 
 CrtNewFn CrtNew;
 CrtDeleteFn CrtDelete;
@@ -106,6 +110,7 @@ InstanceFn GuiResources;      // GuiResourceManager_t::GetInstance
 GuiTextureFn GuiTexture;      // GuiResourceManager_t::GetGuiTexture(id, Format_e): a skin image as pixels
 ReleaseTextureFn ReleaseTexture;
 SpriteIntFn SpriteWidth, SpriteHeight;
+SetTargetFn SetTarget;        // TargetingModule_t::SetTarget: the selection (nano target), as a click
 
 // Allocation sizes: Window is 0x74 bytes (CharBarWindow_c's own fields start there), View 0x128
 // (CharacterBar_c's), ViewSurface_c 0x68 and SpriteInfo_t 0x44 (as TextRenderer_c allocates them).
@@ -184,6 +189,8 @@ bool ResolveAll()
     Resolve(GuiResources, "Interfaces.dll", "?GetInstance@GuiResourceManager_t@@SAPAV1@XZ");
     Resolve(GuiTexture, "Interfaces.dll", "?GetGuiTexture@GuiResourceManager_t@@QAEPAVSpriteInfo_t@@HW4Format_e@@@Z");
     Resolve(ReleaseTexture, "Interfaces.dll", "?ReleaseTexture@GuiResourceManager_t@@QAEXPAVSpriteInfo_t@@@Z");
+    // Click a panel to select whom it shows (optional: no selecting without it).
+    Resolve(SetTarget, gui, "?SetTarget@TargetingModule_t@@CAXABVIdentity_t@@_N@Z");
     // In GUI.dll or Utils.dll depending on the build.
     CriteriaEvaluate = nullptr;
     for (const char* m : {gui, "Utils.dll"}) {
@@ -712,6 +719,7 @@ struct Panel {
     float homeX = 0, homeY = 0; // its own place: from [Bars], or the default
     float cfgSeenX = -2, cfgSeenY = -2; // the [Bars] position last taken
     std::string drawn;         // what the texture shows (redrawn when this changes)
+    game::Identity id{};       // whom it shows: a click selects them
     // A second surface over the first, for what changes only in strength (the fight target's
     // outline): faded with its alpha, without repainting or sending anything.
     void* overlaySprite = nullptr;
@@ -724,7 +732,7 @@ struct Panel {
 Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 480, 224};
 Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 480, 224};
 Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 480, 224};
-Panel g_tot{"nano target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 480, 224};
+Panel g_tot{"fight target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 480, 224};
 Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot};
 bool g_nanoInFightPlace = false; // no fight target: the nano target is shown where the fight target's panel is
 
@@ -741,6 +749,7 @@ void Forget(Panel& p)
     p.w = p.h = 0;
     p.x = p.y = -1;
     p.drawn.clear();
+    p.id = {};
     p.overlayDrawn.clear();
     p.overlayAlpha = 1.0f;
     if (g_drag == &p)
@@ -755,7 +764,7 @@ void Clamp(Panel& p, const GuiPoint& screen)
 
 // The panel's own place: the [Bars] position when it changed (start, Clarity.ini edited, a drag saved),
 // else the default - either side of the screen's middle, a little below it, the nano target under the
-// fight target and the nano target's target right of it.
+// fight target and the fight target's target right of it.
 void UpdateHome(Panel& p, const GuiPoint& screen, float k)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -1064,6 +1073,7 @@ void UpdateSelf(HWND hwnd, DWORD now)
     state += part;
     AppendText(state, hpAmount);
     AppendText(state, npAmount);
+    g_self.id = self;
     // Your health over your nano, in the game's colours.
     Present(g_self, w, h, g_self.homeX, g_self.homeY, state, hwnd, [&](Canvas& c) {
         const float fw = static_cast<float>(w);
@@ -1139,6 +1149,7 @@ void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, fl
     AppendText(state, r.name);
     AppendText(state, r.amount);
     AppendText(state, r.level);
+    p.id = r.id;
     Present(p, w, h, x, y, state, hwnd, [&](Canvas& c) {
         const float fw = static_cast<float>(barW);
         float left = edge;
@@ -1172,7 +1183,7 @@ Trail g_fightTrail, g_nanoTrail, g_totTrail;
 
 // The fight target's panel; the nano target's panel smaller at its own place while there's a fight
 // target, else in the fight target's place at full size. One character as both: the fight target's
-// panel only. The nano target's target (whoever it's targeting, maybe you) small at its own place.
+// panel only. The fight target's target (whoever it's targeting, maybe you) small at its own place.
 void UpdateTargets(HWND hwnd, DWORD now)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -1204,7 +1215,7 @@ void UpdateTargets(HWND hwnd, DWORD now)
         return;
     game::Identity tot{};
     Row totRow{};
-    if (hasNano && cfg.showTargetTarget && n3::TargetOf(nano, &tot) && MakeRow(tot, &totRow)) {
+    if (hasFight && cfg.showTargetTarget && n3::TargetOf(fight, &tot) && MakeRow(tot, &totRow)) {
         PresentTarget(g_tot, totRow, true, false, g_tot.homeX, g_tot.homeY, g_totTrail, hwnd, now);
     } else {
         Show(g_tot, false);
@@ -1299,6 +1310,7 @@ bool g_timerSet = false;
 
 POINT g_dragMouse{};
 float g_dragX = 0, g_dragY = 0;
+bool g_swallowUp = false;      // a click selected someone: its button-up isn't the game's either
 
 // The dropped panel's place becomes its home - or the fight target's, when the nano target was
 // standing in for it.
@@ -1333,6 +1345,22 @@ void EndDrag()
         SavePosition(p);
 }
 
+// The visible panel under a client-area point, if the GUI has no other window there.
+Panel* PanelAt(HWND hwnd, LPARAM lp)
+{
+    GuiPoint screen{};
+    const float k = GuiPerPx(hwnd, &screen);
+    const float gx = static_cast<short>(LOWORD(lp)) * k, gy = static_cast<short>(HIWORD(lp)) * k;
+    void* under = MouseWindow(g_wc);
+    for (Panel* p : g_panels) {
+        if (!p->window || !WindowIsVisible(p->window) || (under && under != p->window))
+            continue;
+        if (gx >= p->x && gy >= p->y && gx < p->x + p->gw && gy < p->y + p->gh)
+            return p;
+    }
+    return nullptr;
+}
+
 bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
 {
     if (!g_timerSet) // the first message: this is the game thread
@@ -1344,28 +1372,31 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
         Update(hwnd);
         *result = 0;
         return true;
-    case WM_LBUTTONDOWN: {
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK: {
         const BarsConfig& cfg = Cfg().bars;
-        if (g_drag || !cfg.enable || cfg.locked || !g_wc || (wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL)))
+        if (g_drag || !cfg.enable || !g_wc || (wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL)))
             return false;
-        GuiPoint screen{};
-        const float k = GuiPerPx(hwnd, &screen);
-        const float gx = static_cast<short>(LOWORD(lp)) * k, gy = static_cast<short>(HIWORD(lp)) * k;
-        void* under = MouseWindow(g_wc);
-        for (Panel* p : g_panels) {
-            if (!p->window || !WindowIsVisible(p->window) || (under && under != p->window))
-                continue;
-            if (gx < p->x || gy < p->y || gx >= p->x + p->gw || gy >= p->y + p->gh)
-                continue;
-            g_drag = p;
-            g_dragMouse = {static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};
-            g_dragX = p->x;
-            g_dragY = p->y;
-            SetCapture(hwnd);
+        Panel* p = PanelAt(hwnd, lp);
+        if (!p)
+            return false;
+        if (cfg.locked) { // locked: select whom it shows
+            if (!SetTarget || !p->id.type)
+                return false;
+            SetTarget(p->id, false); // as a click on the character
+            g_swallowUp = true;
+            if (Cfg().fct.debug)
+                Log("[bars] click selected %u:%u", p->id.type, p->id.instance);
             *result = 0;
             return true;
         }
-        return false;
+        g_drag = p;
+        g_dragMouse = {static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};
+        g_dragX = p->x;
+        g_dragY = p->y;
+        SetCapture(hwnd);
+        *result = 0;
+        return true;
     }
     case WM_MOUSEMOVE:
         if (!g_drag)
@@ -1381,6 +1412,11 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
         *result = 0;
         return true;
     case WM_LBUTTONUP:
+        if (g_swallowUp) {
+            g_swallowUp = false;
+            *result = 0;
+            return true;
+        }
         if (!g_drag)
             return false;
         EndDrag();

@@ -162,8 +162,8 @@ const Item kItems[] = {
     {"CLR_BarsEnable", L"Enable", "Clarity bars (off = the game's health, nano and target bars)", BB(enable)},
     {"CLR_BarsNumbers", L"Numbers", "Numbers on the bars:", BR(numbers, kBarNumbers)},
     {"CLR_BarsShowTarget", L"ShowTarget", "Bars for your fight target and nano target", BB(showTarget)},
-    {"CLR_BarsShowTargetTarget", L"ShowTargetTarget", "Bar for your nano target's target", BB(showTargetTarget)},
-    {"CLR_BarsLocked", L"Locked", "Lock the bars in place (off = drag a bar to move it)", BB(locked)},
+    {"CLR_BarsShowTargetTarget", L"ShowTargetTarget", "Bar for your fight target's target", BB(showTargetTarget)},
+    {"CLR_BarsLocked", L"Locked", "Lock the bars in place", BB(locked)},
     {"CLR_BarsTrail", L"Trail", "Show health just lost as a light segment that shrinks away", BB(trail)},
     {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
 };

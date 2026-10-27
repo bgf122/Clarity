@@ -176,7 +176,7 @@ const char kDefaultIni[] =
     "; Bars for your fight target and your nano target (the nano target's is smaller while you have a fight\n"
     "; target, and takes the fight target's place when you don't)\n"
     "ShowTarget=1\n"
-    "; A small bar for whom your nano target is targeting (maybe you)\n"
+    "; A small bar for whom your fight target is targeting (maybe you)\n"
     "ShowTargetTarget=1\n"
     "; 1 = the bars can't be dragged\n"
     "Locked=0\n"

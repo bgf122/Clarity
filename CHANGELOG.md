@@ -2,6 +2,16 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.14
+
+### Bars
+- **Click to target:** while the bars are locked, click any bar to make that character your nano target. Clicking your own bar targets you.
+  - While the bars are unlocked, clicking and dragging still moves them.
+- **Your fight target's target:** the small target's-target bar now follows your fight target instead of your nano target. It's hidden while you have no fight target.
+
+### Nameplates
+- **Target plates up to 80 m:** the nameplates of your nano target and fight target are hidden once they're more than 80 m away.
+
 ## 0.1.13
 
 ### Bars

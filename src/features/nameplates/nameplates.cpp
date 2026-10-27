@@ -183,6 +183,7 @@ constexpr DWORD kBarEveryMs = 100;     // a plate's health bar is redrawn at mos
 constexpr float kSightFadeSec = 0.15f; // fade out / in when a wall comes between
 constexpr DWORD kBlinkMs = 1600;       // the "attacking you" brackets: one slow blink, full to faint and back
 constexpr float kEdgeMarginPx = 8.0f;     // target plates kept this far inside the window edges
+constexpr float kTargetRange = 80.0f; // your selected / fight target's plate is hidden beyond this (metres from you)
 constexpr float kFirstPersonRadius = 1.5f; // your own plate's anchor this close to the camera = first person
 constexpr int kBlinkSteps = 6;         // painted strengths (each change repaints and sends the brackets' area)
 constexpr float kBlinkLow = 0.25f;     // faintest strength
@@ -1423,6 +1424,17 @@ int __fastcall Hook_Update(uint8_t* ind)
         p.screenTick = 0;
         return keep;
     }
+    // Your selected and fight targets: nothing beyond kTargetRange of you.
+    game::Vec3 me;
+    const bool haveMe = n3::Position({kTypeCharacter, game::ClientInstance()}, &me);
+    if (target && haveMe) {
+        const float dx = pos.x - me.x, dy = pos.y - me.y, dz = pos.z - me.z;
+        if (dx * dx + dy * dy + dz * dz > kTargetRange * kTargetRange) {
+            game::VisualSpriteSetInvisible(Field<void*>(ind, kIndSprite));
+            p.screenTick = 0;
+            return keep;
+        }
+    }
     const float ppu = game::PxPerUnit(view.z);
     // Your selected and fight targets are a little bigger than the plates around them.
     const float capPx = std::clamp(cfg.naturalSize * ppu, cfg.minPx, cfg.maxPx) * (target ? cfg.targetScale : 1.0f);
@@ -1442,9 +1454,8 @@ int __fastcall Hook_Update(uint8_t* ind)
     if (cfg.fadeInSec > 0.0f)
         alpha = std::min(1.0f, (GetTickCount() - p.born) / (cfg.fadeInSec * 1000.0f));
     // Only ordinary tags fade with distance: your selected and fight targets stay readable as long
-    // as the game keeps their indicator, e.g. a nano target beyond the 30 m tag range.
-    game::Vec3 me;
-    if (p.role == Role::Normal && cfg.fadeStart < kTagRange && n3::Position({kTypeCharacter, game::ClientInstance()}, &me)) {
+    // as the game keeps their indicator (up to kTargetRange), e.g. a nano target beyond the 30 m tag range.
+    if (p.role == Role::Normal && cfg.fadeStart < kTagRange && haveMe) {
         const float dx = pos.x - me.x, dz = pos.z - me.z;
         const float d = std::sqrt(dx * dx + dz * dz);
         alpha *= std::clamp((kTagRange - d) / (kTagRange - cfg.fadeStart), 0.0f, 1.0f);

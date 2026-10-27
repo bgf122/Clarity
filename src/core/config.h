@@ -139,8 +139,8 @@ struct BarsConfig {
     float selfX = -1.0f, selfY = -1.0f;
     float targetX = -1.0f, targetY = -1.0f; // the fight target (and the nano target when there's none)
     float nanoX = -1.0f, nanoY = -1.0f;     // the nano target while there's a fight target
-    float totX = -1.0f, totY = -1.0f;       // the nano target's target
-    bool showTargetTarget = true;           // a bar for whom your nano target is targeting
+    float totX = -1.0f, totY = -1.0f;       // the fight target's target
+    bool showTargetTarget = true;           // a bar for whom your fight target is targeting
 };
 
 // A key with modifiers; vk 0 = none.

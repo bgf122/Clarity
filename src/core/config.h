@@ -102,13 +102,8 @@ struct NameplateConfig {
     bool showPlayers = true;
     bool showNpcs = true;
     bool showPets = true;
-    int barColor = 0;          // health bar colour: 0 classic (the game's consider colours by level
-                               // difference), 1 one colour (barHue), 2 by health (green -> yellow -> red)
-    float barHue = 0.0f;       // hue for barColor 1, degrees: 0 red, 120 green, 240 blue
-    float barBrightness = 0.9f;  // health bar colours this bright (1 = the pure colours)
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target
-    bool background = true;    // a dark panel inside the frame, behind name and bar
     float targetScale = 1.1f;  // selected / fight-target plates this much bigger than the others
     float fadeInSec = 0.25f;
     float fadeStart = 28.0f;   // metres from you; fully faded at the game's 30 m tag range
@@ -123,7 +118,7 @@ struct NameplateConfig {
 struct BarsConfig {
     bool enable = false;           // on = Clarity's bars in place of the game's health, nano and target bars
     bool locked = false;           // panels can't be dragged (a click selects whom one shows)
-    float scale = 1.0f;            // panel size (0.6-2)
+    float scale = 0.8f;            // panel size (0.6-2)
     // Positions (GUI units, top-left), saved when a panel is dragged; -1 = the default place.
     float selfX = -1.0f, selfY = -1.0f;
     float targetX = -1.0f, targetY = -1.0f; // the fight target (and the nano target when there's none)

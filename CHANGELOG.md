@@ -2,6 +2,37 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.15
+
+### Frames (the bars)
+- **New look:** your bars and your targets' bars are now in metal frames, and the options page is called **Frames**.
+  - Each name is shown in full above its frame, with a dark outline so it reads on bright ground too.
+  - Your health and nano show their amounts, like 9,350 / 12,950. The percentages are gone.
+  - Target bars show health only, coloured by the target's level in the game's colours, with as many sections as the game's own target bar for that much health. Target levels are no longer shown.
+  - The fight target's frame has a pulsing orange ring.
+- **Your nano target's target** is back: a small frame with the name of whoever your nano target is targeting.
+- **Smoother:** the light piece that showed health just lost is gone, and health changes no longer redraw the whole frame, which made them lag.
+- **Game options:** while the frames are on, the game's Show Nano Target, Show Fight Target and Show Target's Target options are greyed out.
+- **Fewer options:** the Frames page has just Enabled, Locked and Size. The size now defaults to 80%. The target frames, the target's-target frame and the amounts are always on.
+
+### Nameplates
+- **New look:** the name in a frame like the bars', with the org line under it.
+  - Only your nano target's and fight target's plates have a health bar.
+  - Your nano target gets a white frame, your fight target an orange one, and gold when it's both.
+  - A character attacking you gets a blinking red border.
+  - The level is no longer shown.
+- **Removed:**
+  - The Classic style.
+  - The plate over your own character. Targeting yourself still shows one.
+  - The health bar colour choices. Bars always use the game's colours by level.
+  - The background and font settings.
+- **Always on now:** clicking a plate to select that character, and showing titles and orgs.
+- **Simpler options:** Enabled; Size, Minimum Size, Maximum Size, Opacity and Target Nameplate Size; Overlapping nameplates; and a Nameplates group with Players, NPCs and Monsters, and Pets.
+
+### Options
+- Each Clarity page now shows just its name at the top, and the on/off switches are called **Enabled**.
+- Only the Floating Combat Text page keeps the Default / Custom choice.
+
 ## 0.1.14
 
 ### Bars

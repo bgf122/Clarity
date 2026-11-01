@@ -546,7 +546,6 @@ uint32_t GlossRgb(uint32_t rgb, float t)
 // being attacked.
 void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
 {
-    const NameplateConfig& cfg = Cfg().np;
     Canvas c;
     // Only characters (Identity type 50000) have health; corpses ("Remains of ...") are Corpse_t
     // dynels of type 51050 and get just their name.
@@ -598,9 +597,8 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
          [&](float, float y) { return y < y0 + h * 0.5f; });
     Ring(c, x0, y0, x1, y1, cut, rim, rim + gap, 0.9f, flat(0x0B0C0E), all);
     Ring(c, x0, y0, x1, y1, cut, rim + gap, ringIn, 1.0f, flat(ringRgb), all);
-    // The panel (Background), a little more solid on target plates.
-    if (cfg.background)
-        Ring(c, x0, y0, x1, y1, cut, ringIn, 1e6f, target ? 0.75f : 0.55f, [](float t) { return Mix(0x1A1D20, 0x0E1012, t); }, all);
+    // The panel, a little more solid on target plates.
+    Ring(c, x0, y0, x1, y1, cut, ringIn, 1e6f, target ? 0.75f : 0.55f, [](float t) { return Mix(0x1A1D20, 0x0E1012, t); }, all);
     // Teal along the panel's lower corners, less of it on the right.
     const float tl = inner + S(2), ic = std::max(0.0f, cut - tl * 0.5858f);
     const float w = x1 - x0;
@@ -781,29 +779,12 @@ int HealthTenths(const game::Identity& id)
     return std::clamp(static_cast<int>(1000.0 * std::min(hp, life) / life), 0, 1000);
 }
 
-// A fully saturated colour of the given hue (degrees).
-uint32_t HueRgb(float hue)
-{
-    const float h = std::fmod(std::max(0.0f, hue), 360.0f) / 60.0f;
-    const float x = 1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f);
-    float r = 0.0f, g = 0.0f, b = 0.0f;
-    switch (static_cast<int>(h)) {
-    case 0: r = 1.0f; g = x; break;
-    case 1: r = x; g = 1.0f; break;
-    case 2: g = 1.0f; b = x; break;
-    case 3: g = x; b = 1.0f; break;
-    case 4: r = x; b = 1.0f; break;
-    default: r = 1.0f; b = x; break;
-    }
-    auto ch = [](float v) { return static_cast<uint32_t>(v * 255.0f + 0.5f); };
-    return (ch(r) << 16) | (ch(g) << 8) | ch(b);
-}
-
-// Bar colours darker (BarBrightness) and a little less saturated than the pure ones, easier on the eye.
+// Bar colours a little darker and less saturated than the pure ones, easier on the eye.
 constexpr float kBarDesaturate = 0.2f;
+constexpr float kBarBrightness = 0.9f;
 uint32_t Soften(uint32_t rgb)
 {
-    const float brightness = std::clamp(Cfg().np.barBrightness, 0.3f, 1.0f);
+    const float brightness = kBarBrightness;
     const float r = ((rgb >> 16) & 0xFF) / 255.0f, g = ((rgb >> 8) & 0xFF) / 255.0f, b = (rgb & 0xFF) / 255.0f;
     const float lum = 0.299f * r + 0.587f * g + 0.114f * b;
     auto ch = [&](float c) {
@@ -819,7 +800,7 @@ bool BarChanged(const Plate& p, const game::Identity& id, int* tenths, uint32_t*
     if (p.barY < 0)
         return false;
     *tenths = HealthTenths(id);
-    *rgb = HealthBarRgb(id, *tenths);
+    *rgb = ConsiderBarRgb(id);
     return *tenths != p.hpPct || *rgb != p.barRgb;
 }
 
@@ -1500,31 +1481,11 @@ void OnConfigChanged()
     g_version.fetch_add(1);
 }
 
-uint32_t HealthBarRgb(const game::Identity& id, int tenths)
-{
-    // Classic: the game's consider colours (by level difference, grey for those it can't rate). Or one
-    // colour for everyone, or by health: green at full health, yellow at half, red at none.
-    const NameplateConfig& cfg = Cfg().np;
-    uint32_t rgb;
-    if (cfg.barColor == 1) {
-        rgb = HueRgb(cfg.barHue);
-    } else if (cfg.barColor == 2) {
-        const int health = tenths >= 0 ? tenths : HealthTenths(id);
-        rgb = HueRgb(120.0f * std::clamp(health, 0, 1000) / 1000.0f);
-    } else {
-        bool considerable = false;
-        rgb = ConsiderRgb(id, &considerable);
-        if (!considerable)
-            return 0xAAAAAA; // the game's grey for those it can't rate (e.g. other players), as it is
-    }
-    return Soften(rgb);
-}
-
 uint32_t ConsiderBarRgb(const game::Identity& id)
 {
     bool considerable = false;
     const uint32_t rgb = ConsiderRgb(id, &considerable);
-    return considerable ? Soften(rgb) : 0xAAAAAA;
+    return considerable ? Soften(rgb) : 0xAAAAAA; // the game's grey for those it can't rate (e.g. other players)
 }
 
 bool PlateTop(uint32_t type, uint32_t instance, float* top)

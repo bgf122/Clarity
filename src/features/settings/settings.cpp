@@ -37,11 +37,8 @@ struct Item {
     double scale;
     const char* section;   // heading printed before this item, or nullptr
     int group = -1;        // combat-log category index (kCombatGroups), instead of a field
-    const char* const* choices = nullptr; // radio buttons (values 0, 1, ...), null-terminated labels ...
-    int NameplateConfig::*npInt = nullptr; // ... for this field
-    bool BarsConfig::*brBool = nullptr;    // Bars page
+    bool BarsConfig::*brBool = nullptr;    // Frames page
     float BarsConfig::*brFloat = nullptr;
-    int BarsConfig::*brInt = nullptr;      // (radio buttons)
 
     const wchar_t* IniSection() const
     {
@@ -50,7 +47,7 @@ struct Item {
         static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars"};
         return kSections[Page()];
     }
-    int Page() const { return (brBool || brFloat || brInt) ? kPageBars : (npBool || npFloat || npInt) ? kPageNameplates : kPageFct; }
+    int Page() const { return (brBool || brFloat) ? kPageBars : (npBool || npFloat) ? kPageNameplates : kPageFct; }
     double Current() const { return Value(Cfg()); }
     double Default() const
     {
@@ -69,14 +66,10 @@ struct Item {
             return c.fct.*floatField;
         if (npBool)
             return c.np.*npBool ? 1.0 : 0.0;
-        if (npInt)
-            return c.np.*npInt;
         if (npFloat)
             return c.np.*npFloat;
         if (brBool)
             return c.bars.*brBool ? 1.0 : 0.0;
-        if (brInt)
-            return c.bars.*brInt;
         return c.bars.*brFloat;
     }
 };
@@ -86,15 +79,12 @@ struct Item {
 #define NB(field) true, nullptr, nullptr, &NameplateConfig::field, nullptr, 0, 1, nullptr, 1
 #define NF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, &NameplateConfig::field, lo, hi, fmt, scale
 #define G true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1
-#define NR false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1 // radio buttons: choices + npInt follow
-// Bars page: the field goes last, after section, group, choices and npInt.
-#define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, &BarsConfig::field
-#define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, &BarsConfig::field
-
-const char* const kBarColors[] = {"Classic (by level)", "Single colour", "By health", nullptr};
+// Frames page: the field goes last, after section and group.
+#define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, &BarsConfig::field
+#define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, &BarsConfig::field
 
 const Item kItems[] = {
-    {"CLR_FctEnable", L"Enable", "Improved floating combat text (off = the game's original)", B(enable), "Floating combat text"},
+    {"CLR_FctEnable", L"Enable", "Enabled", B(enable), "Floating combat text"},
     {"CLR_FctSizePx", L"SizePx", "Text size:", F(sizePx, 10, 60, "%.0f px", 1), nullptr},
     {"CLR_FctLifetime", L"LifetimeSec", "Time on screen:", F(lifetimeSec, 0.5, 4, "%.1f s", 1), nullptr},
     {"CLR_FctRisePx", L"RisePx", "Upward drift:", F(risePx, 0, 150, "%.0f px", 1), nullptr},
@@ -135,20 +125,16 @@ const Item kItems[] = {
     {"CLR_FctSelfSigns", L"SelfSigns", "Show - before damage you take and + before gains", B(selfSigns), nullptr},
     {"CLR_FctFollowTarget", L"FollowTarget", "Numbers follow their target as it moves", B(followTarget), nullptr},
 
-    {"CLR_NpEnable", L"Enable", "Clarity nameplates (off = the game's original)", NB(enable), "Nameplates"},
-    {"CLR_NpNaturalSize", L"NaturalSize", "Size in the world (name capitals):", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},
-    {"CLR_NpMinPx", L"MinPx", "Smallest on screen:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
-    {"CLR_NpMaxPx", L"MaxPx", "Largest on screen:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},
-    {"CLR_NpOtherOpacity", L"OtherOpacity", "Opacity of plates other than your target:", NF(otherOpacity, 0.1, 1, "%.0f%%", 100), nullptr},
-    {"CLR_NpBackground", L"Background", "Dark background inside the frame", NB(background), nullptr},
-    {"CLR_NpTargetScale", L"TargetScale", "Size of your target's plate:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
-    {"CLR_NpStack", L"Stack", "Don't let nameplates overlap (farther ones move up)", NB(stack), nullptr},
-    {"CLR_NpBarColor", L"BarColor", "Health bar colour:", NR, nullptr, -1, kBarColors, &NameplateConfig::barColor},
-    {"CLR_NpBarHue", L"BarHue", "Single colour (hue):", NF(barHue, 0, 360, "%.0f", 1), nullptr},
-    {"CLR_NpBarBrightness", L"BarBrightness", "Health bar colour brightness:", NF(barBrightness, 0.3, 1, "%.0f%%", 100), nullptr},
-    {"CLR_NpShowPlayers", L"ShowPlayers", "Nameplates for players", NB(showPlayers), nullptr},
-    {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
-    {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
+    {"CLR_NpEnable", L"Enable", "Enabled", NB(enable), nullptr},
+    {"CLR_NpNaturalSize", L"NaturalSize", "Size:", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},
+    {"CLR_NpMinPx", L"MinPx", "Minimum Size:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
+    {"CLR_NpMaxPx", L"MaxPx", "Maximum Size:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},
+    {"CLR_NpOtherOpacity", L"OtherOpacity", "Opacity:", NF(otherOpacity, 0.1, 1, "%.0f%%", 100), nullptr},
+    {"CLR_NpTargetScale", L"TargetScale", "Target Nameplate Size:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
+    {"CLR_NpStack", L"Stack", "Overlapping nameplates", NB(stack), nullptr},
+    {"CLR_NpShowPlayers", L"ShowPlayers", "Players", NB(showPlayers), "Nameplates:"},
+    {"CLR_NpShowNpcs", L"ShowNpcs", "NPCs and Monsters", NB(showNpcs), nullptr},
+    {"CLR_NpShowPets", L"ShowPets", "Pets", NB(showPets), nullptr},
 
     {"CLR_BarsEnable", L"Enable", "Enabled", BB(enable)},
     {"CLR_BarsLocked", L"Locked", "Locked", BB(locked)},
@@ -161,7 +147,6 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef NB
 #undef NF
 #undef G
-#undef NR
 #undef BB
 #undef BF
 
@@ -172,8 +157,8 @@ std::atomic<double> g_value[kItemCount];
 // "Settings: Default / Custom" at the top of each page (kPage*). Choosing Default
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
-// (The Frames page has none: just on/off, locked and size.)
-const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", "CLR_PresetNp", nullptr};
+// (Only the Floating Combat Text page has one.)
+const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", nullptr, nullptr};
 const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
 std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
@@ -269,11 +254,9 @@ void Register(const Item& item, double value)
 {
     alignas(8) uint8_t node[kValueNodeSize] = {};
     StringCtor(node, item.var);
-    const bool ranged = !item.isBool && !item.choices;
+    const bool ranged = !item.isBool;
     if (item.isBool) {
         VariantBool(node + 0x20, value != 0.0);
-    } else if (item.choices) {
-        VariantInt(node + 0x20, static_cast<int>(value)); // radio buttons hold ints
     } else {
         VariantDouble(node + 0x20, value);
         VariantDouble(node + 0x38, item.min);
@@ -422,11 +405,9 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
     x += scrollName;
     x += "\">\r\n"
          "      <View h_alignment=\"LEFT\" view_layout=\"vertical\" max_size=\"Point(16000,-1)\" layout_borders=\"Rect(0,0,10,0)\">\r\n"
-         "        <TextView value=\"Clarity: ";
+         "        <TextView value=\"";
     x += page;
-    x += "\" font=\"HUGE\" layout_borders=\"Rect(0,0,0,5)\" />\r\n"
-         "        <TextView value=\"Changes apply at once. Settings are saved to Clarity.ini (fonts and colours are set there).\" font=\"LARGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n"
-         "";
+    x += "\" font=\"HUGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n";
     if (kPresetVars[pageIndex]) {
         x += "        <OptionRadioButtonGroup label=\"Settings:\" layout_borders=\"Rect(10,0,0,5)\" opt_type=\"variant\" opt_variable=\"";
         x += kPresetVars[pageIndex];
@@ -449,24 +430,12 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
             x += "        <TextView value=\"";
             x += item.section;
             x += "\" font=\"LARGE\" layout_borders=\"Rect(0,10,0,3)\" />\r\n";
+        } else if (item.section) { // a group's heading ("Nameplates:")
+            x += "        <TextView value=\"";
+            x += item.section;
+            x += "\" layout_borders=\"Rect(10,6,0,2)\" />\r\n";
         }
-        if (item.choices) {
-            x += "        <OptionRadioButtonGroup label=\"";
-            x += item.label;
-            x += "\" layout_borders=\"Rect(10,3,0,3)\" opt_type=\"variant\" opt_variable=\"";
-            x += item.var;
-            x += "\">\r\n";
-            for (int c = 0; item.choices[c]; ++c) {
-                char value[16];
-                sprintf_s(value, "%d", c);
-                x += "          <RadioButton label=\"";
-                x += item.choices[c];
-                x += "\" value=\"";
-                x += value;
-                x += "\"/>\r\n";
-            }
-            x += "        </OptionRadioButtonGroup>\r\n";
-        } else if (item.isBool) {
+        if (item.isBool) {
             x += "        <OptionCheckBox label=\"";
             x += item.label;
             x += "\" layout_borders=\"Rect(10,0,0,0)\" opt_type=\"variant\" opt_variable=\"";
@@ -704,7 +673,7 @@ void Flush()
         t_resetting = true;
         for (const Item& item : kItems) {
             if (item.Page() == page)
-                SetValue(item.var, item.Default(), item.isBool, item.choices != nullptr);
+                SetValue(item.var, item.Default(), item.isBool, false);
         }
         t_resetting = false;
         g_customPage[page].store(false);
@@ -734,8 +703,6 @@ void Flush()
         wchar_t text[32];
         if (item.isBool)
             swprintf_s(text, L"%d", v != 0.0 ? 1 : 0);
-        else if (item.choices)
-            swprintf_s(text, L"%d", static_cast<int>(v + 0.5));
         else
             swprintf_s(text, L"%.3g", v);
         WritePrivateProfileStringW(item.IniSection(), item.key, text, ConfigPath().c_str());

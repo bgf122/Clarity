@@ -15,10 +15,6 @@ bool Install();
 // Re-render all plates after settings changed (called after Clarity.ini reloads).
 void OnConfigChanged();
 
-// The health bar colour of a character's plate (tenths: health in 0.1 %, -1 = look it up), as set on
-// the Nameplates page: the game's consider colours, one colour, or by health.
-uint32_t HealthBarRgb(const game::Identity& id, int tenths);
-
 // The game's consider colour for a character's level (green, yellow, red by level difference, grey
 // below the range) for a health bar, softened as the plates' bars; grey for those it can't rate.
 uint32_t ConsiderBarRgb(const game::Identity& id);

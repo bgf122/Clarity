@@ -135,19 +135,10 @@ const char kDefaultIni[] =
     "ShowPlayers=1\n"
     "ShowNpcs=1\n"
     "ShowPets=1\n"
-    "; Health bar colour: 0 = classic (the game's consider colours: grey, green, yellow, red by level\n"
-    "; difference), 1 = one colour for all, BarHue (0-360: 0 red, 60 yellow, 120 green, 180 cyan, 240 blue,\n"
-    "; 300 magenta), 2 = by health (green at full health, through yellow, to red near death)\n"
-    "BarColor=0\n"
-    "BarHue=0\n"
-    "; Brightness of those colours (0.3-1, 1 = the pure colours)\n"
-    "BarBrightness=0.9\n"
     "; 1 = don't let nameplates overlap: farther ones move up above nearer ones\n"
     "Stack=1\n"
     "; Opacity of plates other than your selected / fight target (0.1-1)\n"
     "OtherOpacity=0.9\n"
-    "; 1 = a dark panel inside the frame, behind name and health bar (stands out on bright backgrounds)\n"
-    "Background=1\n"
     "; Your selected / fight target's plate is this much bigger than the others (1-2, 1.1 = 10% bigger)\n"
     "TargetScale=1.1\n"
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
@@ -163,7 +154,7 @@ const char kDefaultIni[] =
     "; 1 = the bars can't be dragged; a click on one selects whom it shows\n"
     "Locked=0\n"
     "; Size (0.6-2)\n"
-    "Scale=1\n"
+    "Scale=0.8\n"
     "; Where the bars are (top-left, GUI units); set when you drag one. -1 = the default place.\n"
     "SelfX=-1\n"
     "SelfY=-1\n"
@@ -363,12 +354,8 @@ void LoadConfig()
     n.showPlayers = ReadFloat(p, ns, L"ShowPlayers", dn.showPlayers) != 0.0f;
     n.showNpcs = ReadFloat(p, ns, L"ShowNpcs", dn.showNpcs) != 0.0f;
     n.showPets = ReadFloat(p, ns, L"ShowPets", dn.showPets) != 0.0f;
-    n.barColor = std::clamp(static_cast<int>(ReadFloat(p, ns, L"BarColor", static_cast<float>(dn.barColor))), 0, 2);
-    n.barHue = std::clamp(ReadFloat(p, ns, L"BarHue", dn.barHue), 0.0f, 360.0f);
-    n.barBrightness = std::clamp(ReadFloat(p, ns, L"BarBrightness", dn.barBrightness), 0.3f, 1.0f);
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);
-    n.background = ReadFloat(p, ns, L"Background", dn.background) != 0.0f;
     n.targetScale = std::clamp(ReadFloat(p, ns, L"TargetScale", dn.targetScale), 1.0f, 2.0f);
     n.fadeInSec = ReadFloat(p, ns, L"FadeInSec", dn.fadeInSec);
     n.fadeStart = ReadFloat(p, ns, L"FadeStart", dn.fadeStart);

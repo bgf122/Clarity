@@ -12,7 +12,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Several hits on one target start side by side and rise straight up from where they happened.
   - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
-  - Readable plates over players, NPCs and pets: the name (with its title) in a frame like the bars', and the org under it. Your nano and fight targets' plates also have a health bar (classic level colours, one colour of your choice, or by health). The frame's dark background can be turned off.
+  - Readable plates over players, NPCs and pets: the name (with its title) in a frame like the bars', and the org under it. Your nano and fight targets' plates also have a health bar, in the game's colours by level.
   - Your selected (nano) target and your fight target get a coloured frame (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
   - Characters attacking you get a slowly blinking red border.
   - Ctrl+Shift+U hides the game's interface (windows, chat, bars) and keeps the nameplates and combat text, e.g. for screenshots. The key is set in Clarity.ini (`[Interface] HideUiKey`).
@@ -62,7 +62,7 @@ Close the game and delete `dinput.dll`. You can also delete `Clarity.ini` (your 
 Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs: the file is reloaded automatically. The sections are:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
-- `[Nameplates]`: sizes, what's shown, opacity, background;
+- `[Nameplates]`: on/off, sizes, opacity, overlapping, and which plates (players, NPCs, pets);
 - `[Bars]`: the frames: on/off, locked, size, and where each frame is.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.

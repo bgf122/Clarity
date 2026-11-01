@@ -96,27 +96,22 @@ struct FctConfig {
 
 struct NameplateConfig {
     bool enable = true;
-    int style = 0;             // 0 Modern, 1 Classic (the game's tags, sharp at any size)
     float naturalSize = 0.14f; // world height of the name's capitals before clamping
     float minPx = 11.0f;       // name capitals on screen never smaller than this ...
     float maxPx = 20.0f;       // ... or larger than this
     bool showPlayers = true;
     bool showNpcs = true;
     bool showPets = true;
-    bool showSelf = false;     // your own character always has a plate (hidden in first person)
-    bool showLevel = true;
     bool showOrg = true;       // org / title line
     bool showHealth = true;
-    int barColor = 0;          // health bar and level colour: 0 classic (the game's consider colours by level
+    int barColor = 0;          // health bar colour: 0 classic (the game's consider colours by level
                                // difference), 1 one colour (barHue), 2 by health (green -> yellow -> red)
     float barHue = 0.0f;       // hue for barColor 1, degrees: 0 red, 120 green, 240 blue
-    float barBrightness = 0.9f;  // health bar and level colours this bright (1 = the pure colours)
-    wchar_t fontName[64] = L"Verdana"; // the GUI's TrueType face; read at game start
-    int fontWeight = 400;
+    float barBrightness = 0.9f;  // health bar colours this bright (1 = the pure colours)
     bool clickToTarget = true; // left-click a plate to select that character
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target
-    float backgroundOpacity = 0.1f; // dark panel behind level, name and bar (0 = none)
+    bool background = true;    // a dark panel inside the frame, behind name and bar
     float targetScale = 1.1f;  // selected / fight-target plates this much bigger than the others
     float fadeInSec = 0.25f;
     float fadeStart = 28.0f;   // metres from you; fully faded at the game's 30 m tag range
@@ -133,7 +128,6 @@ struct BarsConfig {
     bool showTarget = true;        // the fight target's and nano target's panels
     bool locked = false;           // panels can't be dragged
     bool trail = true;             // health just lost shows as a light segment that shrinks away
-    int numbers = 2;               // on your bars: 0 the amount, 1 the percent, 2 both
     float scale = 1.0f;            // panel size (0.6-2)
     // Positions (GUI units, top-left), saved when a panel is dragged; -1 = the default place.
     float selfX = -1.0f, selfY = -1.0f;

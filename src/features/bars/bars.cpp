@@ -289,6 +289,8 @@ float GuiPerPx(HWND hwnd, GuiPoint* screen)
 // --- painting -------------------------------------------------------------------------------
 
 float g_scale = 0.0f; // the scale the fonts are made for
+float g_screenGuiW = 0.0f; // the screen's width, GUI units
+float g_guiPerPx = 1.0f;   // GUI units per client pixel
 int S(float v)
 {
     return static_cast<int>(std::lround(v * g_scale));
@@ -341,6 +343,92 @@ struct Canvas {
                 const float cover = std::clamp(0.5f - d, 0.0f, 1.0f);
                 const float horiz = std::clamp(std::min(x + 1.0f, cx1) - std::max(static_cast<float>(x), cx0), 0.0f, 1.0f);
                 Blend(x, y, rgb, alpha * cover * horiz);
+            }
+        }
+    }
+
+    // Signed distance (pixels, < 0 inside) from a point to the rectangle (x0, y0)-(x1, y1) with its
+    // corners cut off at 45 degrees, `cut` along each side.
+    static float ChamferDist(float px, float py, float x0, float y0, float x1, float y1, float cut)
+    {
+        const float hx = (x1 - x0) * 0.5f, hy = (y1 - y0) * 0.5f;
+        const float ax = std::fabs(px - (x0 + hx)), ay = std::fabs(py - (y0 + hy));
+        return std::max(std::max(ax - hx, ay - hy), (ax + ay - (hx + hy - cut)) * 0.70710678f);
+    }
+
+    // The cut-corner rectangle filled, antialiased, in rgbAt(t, row) (t from 0 at the top to 1 at
+    // the bottom).
+    template <typename F>
+    void Chamfer(float x0, float y0, float x1, float y1, float cut, float alpha, F&& rgbAt)
+    {
+        for (int y = std::max(0, static_cast<int>(std::floor(y0))); y < std::min(h, static_cast<int>(std::ceil(y1))); ++y) {
+            const uint32_t rgb = rgbAt(std::clamp((y + 0.5f - y0) / (y1 - y0), 0.0f, 1.0f), y);
+            for (int x = std::max(0, static_cast<int>(std::floor(x0))); x < std::min(w, static_cast<int>(std::ceil(x1))); ++x) {
+                const float d = ChamferDist(x + 0.5f, y + 0.5f, x0, y0, x1, y1, cut);
+                Blend(x, y, rgb, alpha * std::clamp(0.5f - d, 0.0f, 1.0f));
+            }
+        }
+    }
+
+    // A line `width` pixels wide just inside the cut-corner rectangle's edge, where keep(x, y) says.
+    template <typename K>
+    void ChamferStroke(float x0, float y0, float x1, float y1, float cut, float width, uint32_t rgb, float alpha, K&& keep)
+    {
+        for (int y = std::max(0, static_cast<int>(std::floor(y0))); y < std::min(h, static_cast<int>(std::ceil(y1))); ++y) {
+            for (int x = std::max(0, static_cast<int>(std::floor(x0))); x < std::min(w, static_cast<int>(std::ceil(x1))); ++x) {
+                if (!keep(x + 0.5f, y + 0.5f))
+                    continue;
+                const float d = ChamferDist(x + 0.5f, y + 0.5f, x0, y0, x1, y1, cut);
+                const float cover = std::clamp(0.5f - d, 0.0f, 1.0f) - std::clamp(0.5f - (d + width), 0.0f, 1.0f);
+                Blend(x, y, rgb, alpha * cover);
+            }
+        }
+    }
+
+    // A convex polygon filled, antialiased.
+    void Polygon(const std::vector<std::pair<float, float>>& pts, uint32_t rgb, float alpha)
+    {
+        float area = 0.0f, minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
+        for (size_t i = 0; i < pts.size(); ++i) {
+            const auto& a = pts[i];
+            const auto& b = pts[(i + 1) % pts.size()];
+            area += a.first * b.second - b.first * a.second;
+            minX = std::min(minX, a.first), maxX = std::max(maxX, a.first);
+            minY = std::min(minY, a.second), maxY = std::max(maxY, a.second);
+        }
+        const float sign = area > 0.0f ? 1.0f : -1.0f;
+        for (int y = std::max(0, static_cast<int>(std::floor(minY)) - 1); y < std::min(h, static_cast<int>(std::ceil(maxY)) + 1); ++y) {
+            for (int x = std::max(0, static_cast<int>(std::floor(minX)) - 1); x < std::min(w, static_cast<int>(std::ceil(maxX)) + 1); ++x) {
+                float d = -1e9f;
+                for (size_t i = 0; i < pts.size(); ++i) {
+                    const auto& a = pts[i];
+                    const auto& b = pts[(i + 1) % pts.size()];
+                    const float ex = b.first - a.first, ey = b.second - a.second;
+                    const float len = std::hypot(ex, ey);
+                    if (len <= 0.0f)
+                        continue;
+                    // Outward normal: right of the edge for a clockwise (on screen) polygon.
+                    const float nx = sign * ey / len, ny = -sign * ex / len;
+                    d = std::max(d, (x + 0.5f - a.first) * nx + (y + 0.5f - a.second) * ny);
+                }
+                Blend(x, y, rgb, alpha * std::clamp(0.5f - d, 0.0f, 1.0f));
+            }
+        }
+    }
+
+    // A line `width` pixels thick from (x0, y0) to (x1, y1), antialiased.
+    void Line(float x0, float y0, float x1, float y1, float width, uint32_t rgb, float alpha)
+    {
+        const float r = width * 0.5f;
+        const float dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+        for (int y = std::max(0, static_cast<int>(std::floor(std::min(y0, y1) - r)) - 1);
+             y < std::min(h, static_cast<int>(std::ceil(std::max(y0, y1) + r)) + 1); ++y) {
+            for (int x = std::max(0, static_cast<int>(std::floor(std::min(x0, x1) - r)) - 1);
+                 x < std::min(w, static_cast<int>(std::ceil(std::max(x0, x1) + r)) + 1); ++x) {
+                const float qx = x + 0.5f - x0, qy = y + 0.5f - y0;
+                const float t = len2 > 0.0f ? std::clamp((qx * dx + qy * dy) / len2, 0.0f, 1.0f) : 0.0f;
+                const float d = std::hypot(qx - t * dx, qy - t * dy);
+                Blend(x, y, rgb, alpha * std::clamp(r + 0.5f - d, 0.0f, 1.0f));
             }
         }
     }
@@ -414,6 +502,7 @@ struct TextMasks {
     float width = 0.0f;
 };
 std::unordered_map<std::wstring, TextMasks> g_text; // key: font id, then the text
+std::unordered_map<uint64_t, Canvas> g_frames;      // painted frames, by size
 
 constexpr int kTextPad = 2;
 
@@ -424,8 +513,9 @@ bool EnsureFonts(float scale)
     for (raster::Font& f : g_fonts)
         f.Destroy();
     g_text.clear();
+    g_frames.clear();
     g_scale = scale;
-    g_fontsOk = g_fonts[kFontValue].Create(L"Segoe UI", S(15), 700) && g_fonts[kFontName].Create(L"Segoe UI", S(15), 600);
+    g_fontsOk = g_fonts[kFontValue].Create(L"Bahnschrift", S(15), 600) && g_fonts[kFontName].Create(L"Bahnschrift", S(17), 600);
     if (!g_fontsOk)
         Log("[bars] font creation failed - panels off");
     return g_fontsOk;
@@ -473,17 +563,42 @@ float CentredTop(FontId font, float y)
     return y - ascent * (1.0f - 0.36f); // capitals are ~0.72 of the ascent
 }
 
-std::wstring Fit(FontId font, std::wstring s, float maxW)
+// Text in capitals, spaced out by `spacing` pixels (the panels' name line).
+float SpacedWidth(FontId font, const std::wstring& s, float spacing)
 {
-    if (TextWidth(font, s) <= maxW)
+    float w = 0.0f;
+    for (const wchar_t ch : s)
+        w += TextWidth(font, std::wstring(1, ch)) + spacing;
+    return s.empty() ? 0.0f : w - spacing;
+}
+
+std::wstring Upper(std::wstring s)
+{
+    if (!s.empty())
+        CharUpperBuffW(s.data(), static_cast<DWORD>(s.size()));
+    return s;
+}
+
+// The spaced text cut short with an ellipsis to fit maxW.
+std::wstring FitSpaced(FontId font, std::wstring s, float spacing, float maxW)
+{
+    if (SpacedWidth(font, s, spacing) <= maxW)
         return s;
     while (s.size() > 1) {
         s.pop_back();
-        const std::wstring t = s + L"\x2026";
-        if (g_fonts[font].TextWidth(t.c_str(), static_cast<int>(t.size())) <= maxW)
-            return t;
+        if (SpacedWidth(font, s + L"\x2026", spacing) <= maxW)
+            return s + L"\x2026";
     }
     return s;
+}
+
+void DrawSpaced(Canvas& c, FontId font, const std::wstring& s, float spacing, float x, float y, uint32_t rgb)
+{
+    for (const wchar_t ch : s) {
+        const std::wstring one(1, ch);
+        DrawText(c, font, one, x, y, rgb);
+        x += TextWidth(font, one) + spacing;
+    }
 }
 
 // A name without the game's colour codes (byte 0x10 and a code) or other control bytes.
@@ -558,8 +673,6 @@ struct Trail {
         return cur;
     }
 };
-
-constexpr uint32_t kTrackRgb = 0x0C0D10;
 
 // The game's own bar colours: the fill image of its health / nano bar (CharacterBar_c makes a
 // PowerbarView_c of background, fill and two end caps: health 0x0E, 0x0D, 0x0F, 0x10; nano 0x12, 0x11,
@@ -662,43 +775,13 @@ void LoadColours()
     g_nanoColours = MakeColours(ImageProfile(kNanoFillImage), 0x3C6ED2);
 }
 
-// A bar: a dark track, the filled part in one colour (`colours`, else rgb), the trail lighter, and
-// the label centred. Square, no border.
-void DrawBar(Canvas& c, float x, float y, float w, float h, int tenths, float trail, uint32_t rgb, const Colours* colours,
-             FontId font, const std::wstring& label)
-{
-    c.RoundRect(x, y, x + w, y + h, 0.0f, kTrackRgb, kTrackRgb, 0.7f);
-    if (tenths >= 0) {
-        const float fill = x + w * tenths / 1000.0f;
-        const uint32_t fillRgb = colours ? colours->fill : rgb;
-        const uint32_t trailRgb = Canvas::Mix(fillRgb, 0xFFFFFF, 0.6f);
-        if (trail > tenths)
-            c.RoundRect(x, y, x + w, y + h, 0.0f, trailRgb, trailRgb, 0.9f, fill, x + w * trail / 1000.0f);
-        c.RoundRect(x, y, x + w, y + h, 0.0f, fillRgb, fillRgb, 1.0f, x, fill);
-    }
-    if (!label.empty())
-        DrawText(c, font, label, x + (w - TextWidth(font, label)) * 0.5f, CentredTop(font, y + h * 0.5f), 0xFFFFFF);
-}
-
-std::wstring Percent(int tenths, bool decimal)
-{
-    if (tenths < 0)
-        return {};
-    wchar_t s[16];
-    if (decimal)
-        swprintf_s(s, L"%d.%d%%", tenths / 10, tenths % 10);
-    else
-        swprintf_s(s, L"%d%%", (tenths + 5) / 10);
-    return s;
-}
-
 // --- panels ---------------------------------------------------------------------------------
 
 constexpr float kBarWidth = 232.0f;      // pixels at Scale 1
 constexpr float kSmallBarWidth = 190.0f; // the nano target while there is a fight target
-constexpr int kOwnBarH = 40;             // your health bar (the nano bar 75% of it)
-constexpr int kOwnBarGap = 0;
-constexpr float kTargetBarScale = 0.8f;  // the main target bar: this much of your two bars' height
+constexpr int kOwnBarH = 26;             // your health and nano bars, and the main target bar
+constexpr int kWellGap = 12;             // between your health and nano bars
+constexpr int kSmallBarH = 20;           // the small target bars
 
 struct Panel {
     const char* what;
@@ -729,10 +812,10 @@ struct Panel {
 };
 
 // Sprite sizes: the content at Scale 2 with room to spare.
-Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 480, 224};
-Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 480, 224};
-Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 480, 224};
-Panel g_tot{"fight target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 480, 224};
+Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 544, 256};
+Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 544, 256};
+Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 544, 256};
+Panel g_tot{"fight target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 544, 256};
 Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot};
 bool g_nanoInFightPlace = false; // no fight target: the nano target is shown where the fight target's panel is
 
@@ -762,6 +845,9 @@ void Clamp(Panel& p, const GuiPoint& screen)
     p.y = std::clamp(p.y, 0.0f, std::max(0.0f, screen.y - p.gh));
 }
 
+void SelfSize(int* w, int* h);
+void TargetSize(bool small, int* w, int* h);
+
 // The panel's own place: the [Bars] position when it changed (start, Clarity.ini edited, a drag saved),
 // else the default - either side of the screen's middle, a little below it, the nano target under the
 // fight target and the fight target's target right of it.
@@ -779,10 +865,17 @@ void UpdateHome(Panel& p, const GuiPoint& screen, float k)
         return;
     }
     const float gap = 12.0f * k;
-    p.homeX = &p == &g_self ? screen.x * 0.5f - gap - S(kBarWidth) * k : screen.x * 0.5f + gap;
+    int selfW, selfH, targetW, targetH;
+    SelfSize(&selfW, &selfH);
+    TargetSize(false, &targetW, &targetH);
+    int smallW, smallH;
+    TargetSize(true, &smallW, &smallH);
+    p.homeX = &p == &g_self ? screen.x * 0.5f - gap - selfW * k : screen.x * 0.5f + gap;
+    p.homeY = screen.y * 0.66f;
+    if (&p == &g_nano || &p == &g_tot)
+        p.homeY += targetH * k + gap * 0.5f;
     if (&p == &g_tot)
-        p.homeX += S(kBarWidth + 4.0f) * k + gap;
-    p.homeY = screen.y * 0.66f + (&p == &g_nano ? S(86) * k : 0.0f);
+        p.homeY += smallH * k + gap * 0.5f;
 }
 
 // The window exactly the panel's size: a plain View has no preferred size, and the window would
@@ -1001,13 +1094,6 @@ std::wstring Short(int v)
     return s;
 }
 
-// A character's level, empty if unknown.
-std::wstring Level(const game::Identity& id)
-{
-    const int level = id.type == 50000 ? n3::GetSkill(id, n3::kStatLevel) : n3::kNoValue;
-    return level > 0 && level != n3::kNoValue ? std::to_wstring(level) : std::wstring();
-}
-
 // "8,412 / 12,950"
 std::wstring Amount(int value, int max)
 {
@@ -1016,27 +1102,21 @@ std::wstring Amount(int value, int max)
     return Short(std::min(value, max)) + L" / " + Short(max);
 }
 
-// Numbers in a bar ([Bars] Numbers): the amount at the left, the percent at the right; Amount leaves
-// out the percent, Percentage the amount.
-constexpr int kNumbersAmount = 0, kNumbersPercent = 1, kNumbersBoth = 2;
-void DrawBarText(Canvas& c, float y, float w, float h, const std::wstring& amount, const std::wstring& pct, int numbers)
+// The amount in one of your bars ("8,412 / 12,950"), at its left.
+void DrawBarText(Canvas& c, float y, float h, const std::wstring& amount)
 {
-    const float inset = static_cast<float>(S(6));
-    const float top = CentredTop(kFontValue, y + h * 0.5f);
-    if (numbers != kNumbersPercent && !amount.empty())
-        DrawText(c, kFontValue, amount, inset, top, 0xFFFFFF);
-    if ((numbers != kNumbersAmount || amount.empty()) && !pct.empty())
-        DrawText(c, kFontValue, pct, w - inset - TextWidth(kFontValue, pct), top, 0xFFFFFF);
+    if (!amount.empty())
+        DrawText(c, kFontValue, amount, static_cast<float>(S(6)), CentredTop(kFontValue, y + h * 0.5f), 0xFFFFFF);
 }
 
-// Your health bar and your nano bar, 75% as thick, edge to edge.
+// Your health bar and your nano bar, the same thickness.
 float HealthBarH()
 {
     return static_cast<float>(S(kOwnBarH));
 }
 float NanoBarH()
 {
-    return std::round(HealthBarH() * 0.75f);
+    return HealthBarH();
 }
 
 void AppendText(std::string& state, const std::wstring& s)
@@ -1046,6 +1126,263 @@ void AppendText(std::string& state, const std::wstring& s)
         state += static_cast<char>(ch >> 8);
     }
     state += '|';
+}
+
+// --- the frame ------------------------------------------------------------------------------
+
+// Every panel: a silver rim with cut corners, a dark gap, a gunmetal inner ring with steps along its
+// top and bottom, and a dark inner panel; teal lines glow along the lower inner corners and a teal
+// light sits on the top right. The bars are set into it in silver bezels, and the name is under
+// them in spaced capitals.
+constexpr uint32_t kTealRgb = 0x2FD3B9;
+constexpr uint32_t kLabelRgb = 0xD2D6DA;
+
+int FrameRim()
+{
+    return std::max(3, S(6));
+}
+int FrameGap()
+{
+    return std::max(1, S(2));
+}
+int FrameRing()
+{
+    return std::max(2, S(4));
+}
+int Bezel() // round each bar
+{
+    return std::max(3, S(4));
+}
+// The edge of the inner panel, from the panel's edge.
+int FrameInner()
+{
+    return FrameRim() + FrameGap() + FrameRing();
+}
+int FrameInset() // panel edge -> bars
+{
+    return FrameInner() + S(12) + Bezel();
+}
+float FrameCut()
+{
+    return static_cast<float>(std::max(8, S(16)));
+}
+// The cut of the same corner `d` pixels further in (its edges parallel).
+float InnerCut(float cut, float d)
+{
+    return std::max(0.0f, cut - d * 0.5858f);
+}
+int CapH()
+{
+    return static_cast<int>(std::lround(g_fonts[kFontName].Ascent() * 0.72f));
+}
+// From the bars' bottom to the name's middle, and from there to the panel's bottom.
+int LabelAbove()
+{
+    return Bezel() + S(13) + CapH() / 2;
+}
+int LabelBlock()
+{
+    return LabelAbove() + CapH() / 2 + S(12) + FrameInner();
+}
+
+void SelfSize(int* w, int* h)
+{
+    *w = S(kBarWidth) + 2 * FrameInset();
+    *h = FrameInset() + static_cast<int>(HealthBarH()) + S(kWellGap) + static_cast<int>(NanoBarH()) + LabelBlock();
+}
+
+// The game's target health bar (TargetHealthBar_c) tiles a 16-pixel section image along its length,
+// and its SetTarget (GUI 0x1007313A) makes it longer for more health: min + (max - min) * 0.01 *
+// sqrt(2 * sqrt(max health)), floored and kept between min = 64 and max = (screen width - 192) / 2
+// - 50 GUI units (what the control centre's target view, 0x100746EC, gives it). Clarity's bars keep
+// their length and show as many sections as the game's would: its length / 16.
+float GameSections(int maxHealth)
+{
+    const float minW = 64.0f, maxW = std::max(minW, (g_screenGuiW - 192.0f) * 0.5f - 50.0f);
+    const float f = maxHealth != n3::kNoValue && maxHealth > 0 ? 0.01f * std::sqrt(2.0f * std::sqrt(static_cast<float>(maxHealth))) : 0.0f;
+    return std::clamp(std::floor(minW + (maxW - minW) * f), minW, maxW) / 16.0f;
+}
+
+// The main target panel (the fight target, or the nano target in its place) or a small one.
+void TargetSize(bool small, int* barW, int* barH, int* w, int* h)
+{
+    *barW = small ? S(kSmallBarWidth) : S(kBarWidth);
+    *barH = small ? S(kSmallBarH) : static_cast<int>(HealthBarH());
+    *w = *barW + 2 * FrameInset();
+    *h = FrameInset() + *barH + LabelBlock();
+}
+void TargetSize(bool small, int* w, int* h)
+{
+    int barW, barH;
+    TargetSize(small, &barW, &barH, w, h);
+}
+
+// A panel with only a name (the fight target's target): as wide as a small target panel.
+void NameSize(int* w, int* h)
+{
+    *w = S(kSmallBarWidth) + 2 * FrameInset();
+    *h = 2 * (FrameInner() + S(11)) + CapH();
+}
+
+// A teal line with a soft glow along the points.
+void TealPath(Canvas& c, const std::vector<std::pair<float, float>>& pts, float alpha)
+{
+    const float glow = static_cast<float>(std::max(2, S(3)));
+    const float core = static_cast<float>(std::max(1, S(1)));
+    for (size_t i = 1; i < pts.size(); ++i)
+        c.Line(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second, core + 2.0f * glow, kTealRgb, 0.10f * alpha);
+    for (size_t i = 1; i < pts.size(); ++i)
+        c.Line(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second, core, Canvas::Mix(kTealRgb, 0xFFFFFF, 0.25f),
+               0.85f * alpha);
+}
+
+void PaintFrameInto(Canvas& c)
+{
+    const float W = static_cast<float>(c.w), H = static_cast<float>(c.h), cut = FrameCut();
+    const float rim = static_cast<float>(FrameRim()), gap = static_cast<float>(FrameGap()), ring = static_cast<float>(FrameRing());
+    const float r0 = rim + gap, r1 = r0 + ring; // the inner ring, outside and inside
+    auto flat = [](uint32_t rgb) { return [rgb](float, int) { return rgb; }; };
+    auto above = [&](float y) { return [y](float, float py) { return py < y; }; };
+    auto below = [&](float y) { return [y](float, float py) { return py > y; }; };
+
+    // The silver rim: brushed, light at the top and a little darker below, a bright line along its
+    // outer edge and a dark one along its inner edge, and a dark line round the outside.
+    c.Chamfer(0.0f, 0.0f, W, H, cut, 1.0f, flat(0x0A0B0D));
+    c.Chamfer(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, [](float t, int y) {
+        const uint32_t rgb = Canvas::Mix(0xCDD1D5, 0x8C9196, t);
+        const float grain = static_cast<float>((static_cast<uint32_t>(y) * 2654435761u >> 16) & 0xFF) / 255.0f - 0.5f;
+        return Canvas::Mix(rgb, grain > 0.0f ? 0xFFFFFF : 0x000000, std::fabs(grain) * 0.12f);
+    });
+    c.ChamferStroke(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, 0xFFFFFF, 0.55f, above(H * 0.6f));
+    c.ChamferStroke(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, 0x2A2D30, 0.6f, below(H * 0.6f));
+    // The gap, near black, then the gunmetal ring with a light line along its top.
+    c.Chamfer(rim, rim, W - rim, H - rim, InnerCut(cut, rim), 1.0f, flat(0x0B0C0E));
+    c.Chamfer(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, [](float t, int) { return Canvas::Mix(0x41454A, 0x2B2E32, t); });
+    c.ChamferStroke(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, 0x6A6F74, 0.8f, above(H * 0.5f));
+    // The inner panel, and steps in the ring: thicker along the middle of the top and of the bottom,
+    // with 45-degree ends.
+    c.Chamfer(r1, r1, W - r1, H - r1, InnerCut(cut, r1), 1.0f, [](float t, int) { return Canvas::Mix(0x191B1E, 0x101214, t); });
+    const float step = static_cast<float>(std::max(2, S(4)));
+    const uint32_t ringRgb = 0x34383C;
+    c.Polygon({{W * 0.27f, r1 - 0.5f}, {W * 0.73f, r1 - 0.5f}, {W * 0.73f - step, r1 + step}, {W * 0.27f + step, r1 + step}}, ringRgb, 1.0f);
+    c.Polygon({{W * 0.34f + step, H - r1 - step}, {W * 0.66f - step, H - r1 - step}, {W * 0.66f, H - r1 + 0.5f}, {W * 0.34f, H - r1 + 0.5f}},
+              ringRgb, 1.0f);
+    // Notches across the rim where the bottom steps are.
+    for (const float nx : {W * 0.34f, W * 0.66f})
+        c.Line(nx, H - rim, nx, H - 1.0f, 1.0f, 0x2A2D30, 0.8f);
+
+    // Teal along the inner panel's lower corners: up the side, round the corner, along the bottom
+    // to the step and up it; less of it on the right.
+    const float t = r1 + 1.5f, ic = InnerCut(cut, t);
+    TealPath(c, {{t, H * 0.5f}, {t, H - t - ic}, {t + ic, H - t}, {W * 0.34f, H - t}, {W * 0.34f + step, H - t - step}, {W * 0.42f, H - t - step}},
+             1.0f);
+    TealPath(c, {{W - t, H * 0.62f}, {W - t, H - t - ic}, {W - t - ic, H - t}, {W * 0.8f, H - t}}, 0.7f);
+    // A teal light on the top right, in the ring, with a slanted mark before it.
+    const float ly = r0 + ring * 0.5f, lx1 = W - cut - S(14), lx0 = lx1 - S(22);
+    TealPath(c, {{lx0, ly}, {lx1, ly}}, 1.0f);
+    c.Line(lx0 - S(10), ly + ring * 0.5f, lx0 - S(6), ly - ring * 0.5f, 1.0f, 0x6A6F74, 0.8f);
+}
+
+// The frame for the canvas's size (painted once per size).
+void PaintFrame(Canvas& c)
+{
+    const uint64_t key = (static_cast<uint64_t>(c.w) << 32) | static_cast<uint32_t>(c.h);
+    auto it = g_frames.find(key);
+    if (it == g_frames.end()) {
+        if (g_frames.size() > 16)
+            g_frames.clear();
+        Canvas f;
+        f.Reset(c.w, c.h);
+        PaintFrameInto(f);
+        it = g_frames.emplace(key, std::move(f)).first;
+    }
+    c.Paste(it->second, 0, 0);
+}
+
+// The fill's shading from top to bottom: a bright edge, a light band fading down, the colour, and
+// deeper at the bottom with a bright edge again.
+std::vector<uint32_t> Gloss(uint32_t rgb)
+{
+    std::vector<uint32_t> rows(24);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const float t = (i + 0.5f) / rows.size();
+        if (t < 0.08f)
+            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.55f);
+        else if (t < 0.45f)
+            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.28f * (0.45f - t) / 0.37f);
+        else if (t < 0.85f)
+            rows[i] = Darker(rgb, 1.0f - (t - 0.45f) * 0.5f);
+        else if (t < 0.94f)
+            rows[i] = Darker(rgb, 0.78f);
+        else
+            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.3f);
+    }
+    return rows;
+}
+
+
+// A bar set into the panel at (x, y): a silver bezel, the track, the filled part glossy with fine
+// vertical lines and a bright edge, the trail lighter, the sections (`section` pixels each, 0 =
+// none), and the amount (your bars).
+void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, float trail, uint32_t rgb, const std::wstring& amount,
+             float section = 0.0f)
+{
+    const float b = static_cast<float>(Bezel());
+    const float fx = static_cast<float>(x), fy = static_cast<float>(y), fw = static_cast<float>(w), fh = static_cast<float>(h);
+    c.RoundRect(fx - b - 1.0f, fy - b - 1.0f, fx + fw + b + 1.0f, fy + fh + b + 1.0f, b + 2.0f, 0x0A0B0D, 0x0A0B0D, 1.0f);
+    c.RoundRect(fx - b, fy - b, fx + fw + b, fy + fh + b, b + 1.0f, 0x8A8F94, 0x4B4F53, 1.0f);
+    c.RoundRect(fx - b + 1.0f, fy - b + 1.0f, fx + fw + b - 1.0f, fy + fh + b - 1.0f, b, 0x3A3E42, 0x2C2F33, 1.0f);
+    c.RoundRect(fx - 1.0f, fy - 1.0f, fx + fw + 1.0f, fy + fh + 1.0f, 1.5f, 0x040506, 0x040506, 1.0f);
+    Canvas bar;
+    bar.Reset(w, h);
+    bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, 0x0B0D10, 0x17191D, 1.0f);
+    if (tenths >= 0) {
+        const float fill = fw * tenths / 1000.0f;
+        if (trail > tenths) {
+            const uint32_t trailRgb = Canvas::Mix(rgb, 0xFFFFFF, 0.6f);
+            bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, trailRgb, trailRgb, 0.9f, fill, fw * trail / 1000.0f);
+        }
+        const std::vector<uint32_t> gloss = Gloss(rgb);
+        bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, rgb, rgb, 1.0f, 0.0f, fill, &gloss);
+        for (int lx = 2; lx < fill - 1.0f; lx += 3) // fine vertical lines
+            for (int ly = 1; ly < h - 1; ++ly)
+                bar.Blend(lx, ly, 0x000000, 0.07f);
+        const uint32_t edge = Canvas::Mix(rgb, 0xFFFFFF, 0.45f); // its bright end
+        if (fill >= 2.0f)
+            for (int ly = 0; ly < h; ++ly)
+                bar.Blend(static_cast<int>(fill) - 1, ly, edge, 0.7f);
+    }
+    // Section lines, lit on their right where the bar is filled.
+    for (int i = 1; section >= 2.0f && i * section < fw - section * 0.5f; ++i) {
+        const int sx = static_cast<int>(std::lround(i * section));
+        for (int sy = 0; sy < h; ++sy) {
+            bar.Blend(sx - 1, sy, 0x000000, 0.5f);
+            if (tenths >= 0 && sx < fw * tenths / 1000.0f)
+                bar.Blend(sx, sy, 0xFFFFFF, 0.18f);
+        }
+    }
+    DrawBarText(bar, 0.0f, fh, amount);
+    c.Paste(bar, x, y);
+}
+
+// The name centred under the bars (whose bottom is at barsBottom).
+float NameSpacing()
+{
+    return static_cast<float>(std::max(1, S(1)));
+}
+
+// The name in spaced capitals, centred across the panel with its middle at y.
+void DrawName(Canvas& c, const std::wstring& name, uint32_t rgb, float y)
+{
+    const float spacing = NameSpacing();
+    const std::wstring s = FitSpaced(kFontName, Upper(name), spacing, static_cast<float>(c.w - 2 * FrameInset()));
+    const float x = (c.w - SpacedWidth(kFontName, s, spacing)) * 0.5f;
+    DrawSpaced(c, kFontName, s, spacing, x, CentredTop(kFontName, y), rgb);
+}
+
+void DrawLabel(Canvas& c, const std::wstring& name, uint32_t rgb, int barsBottom)
+{
+    DrawName(c, name, rgb, static_cast<float>(barsBottom + LabelAbove()));
 }
 
 Trail g_selfTrail;
@@ -1061,26 +1398,29 @@ void UpdateSelf(HWND hwnd, DWORD now)
     const float trail = g_selfTrail.Update(Key(self), hp, now, cfg.trail);
     const std::wstring hpAmount = Amount(health, life);
     const std::wstring npAmount = Amount(nano, maxNano);
+    const std::wstring name = PlainName(self);
 
-    const int w = S(kBarWidth);
-    const float healthH = HealthBarH(), gap = static_cast<float>(S(kOwnBarGap)), nanoH = NanoBarH();
-    const int h = static_cast<int>(std::ceil(healthH + gap + nanoH));
+    int w, h;
+    SelfSize(&w, &h);
+    const int barW = S(kBarWidth), inset = FrameInset();
+    const int healthH = static_cast<int>(HealthBarH()), nanoH = static_cast<int>(NanoBarH());
+    const int nanoTop = inset + healthH + S(kWellGap);
     LoadColours();
 
     std::string state;
     char part[96];
-    sprintf_s(part, "%d %d %d %d %.2f|", hp, np, trail < 0.0f ? -1 : static_cast<int>(trail * w / 1000.0f), cfg.numbers, g_scale);
+    sprintf_s(part, "%d %d %d %.2f|", hp, np, trail < 0.0f ? -1 : static_cast<int>(trail * barW / 1000.0f), g_scale);
     state += part;
     AppendText(state, hpAmount);
     AppendText(state, npAmount);
+    AppendText(state, name);
     g_self.id = self;
-    // Your health over your nano, in the game's colours.
+    // Your health over your nano, in the game's colours, with their amounts, and your name.
     Present(g_self, w, h, g_self.homeX, g_self.homeY, state, hwnd, [&](Canvas& c) {
-        const float fw = static_cast<float>(w);
-        DrawBar(c, 0.0f, 0.0f, fw, healthH, hp, trail, 0, &g_healthColours, kFontValue, {});
-        DrawBarText(c, 0.0f, fw, healthH, hpAmount, Percent(hp, false), cfg.numbers);
-        DrawBar(c, 0.0f, healthH + gap, fw, nanoH, np, -1.0f, 0, &g_nanoColours, kFontValue, {});
-        DrawBarText(c, healthH + gap, fw, nanoH, npAmount, Percent(np, false), cfg.numbers);
+        PaintFrame(c);
+        DrawBar(c, inset, inset, barW, healthH, hp, trail, g_healthColours.fill, hpAmount);
+        DrawBar(c, inset, nanoTop, barW, nanoH, np, -1.0f, g_nanoColours.fill, npAmount);
+        DrawLabel(c, name, kLabelRgb, nanoTop + nanoH);
     });
 }
 
@@ -1089,21 +1429,18 @@ struct Row {
     uint32_t nameRgb;
     std::wstring name;
     int hp;      // tenths, -1 = no bar
+    int life;    // max health (the bar's length)
     uint32_t rgb;
-    std::wstring amount;
-    std::wstring level;
 };
 
-// The name and level in the game's consider colours (by level difference); the bar in your health
-// bar's red for every target.
+// The name in the game's consider colours (by level difference); the bar in your health bar's red
+// for every target.
 bool MakeRow(const game::Identity& id, Row* out)
 {
-    Row r{id, nameplates::ConsiderTextRgb(id), PlainName(id), -1, 0};
+    Row r{id, nameplates::ConsiderTextRgb(id), PlainName(id), -1, 0, 0};
     if (id.type == 50000) { // characters; corpses and objects have a name only
-        const int health = n3::GetSkill(id, n3::kStatHealth), life = n3::GetSkill(id, n3::kStatLife);
-        r.hp = Tenths(health, life);
-        r.amount = Amount(health, life);
-        r.level = Level(id);
+        r.life = n3::GetSkill(id, n3::kStatLife);
+        r.hp = Tenths(n3::GetSkill(id, n3::kStatHealth), r.life);
     }
     if (r.name.empty() && r.hp < 0)
         return false;
@@ -1112,7 +1449,7 @@ bool MakeRow(const game::Identity& id, Row* out)
     return true;
 }
 
-// The fight target's bar has an orange outline that fades out and in again: painted once on the
+// The fight target's panel has an orange ring that fades out and in again: painted once on the
 // panel's overlay, faded with the overlay's alpha.
 constexpr DWORD kFadeMs = 1200;            // one fade out and in
 constexpr uint32_t kOutlineRgb = 0xFF8A1A; // the plates' fight-target orange
@@ -1123,67 +1460,69 @@ float FadeAlpha(DWORD now)
     return 0.5f + 0.5f * std::cos(phase * 6.2831853f);
 }
 
-// A target's panel: the level (bold) and the name above its health bar in the consider colour, and in
-// the bar the amount and the percent as on yours. The main one 80% as tall as your two bars together,
-// the nano target's two thirds of that while there's a fight target. Every target panel has room for
-// the outline round the bar, so the nano target's lines up when it takes the fight target's place.
+// The fight target's ring: the frame's inner ring in orange.
+void PaintOutline(Canvas& c)
+{
+    const float r0 = static_cast<float>(FrameRim() + FrameGap());
+    c.ChamferStroke(r0, r0, c.w - r0, c.h - r0, InnerCut(FrameCut(), r0), static_cast<float>(FrameRing()), kOutlineRgb, 1.0f,
+                    [](float, float) { return true; });
+}
+
+// A target's panel: its health bar in sections, as the game's target bar, and its name under it in
+// the consider colour; no numbers. The nano target's is smaller while there's a fight target.
 void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, float y, Trail& trailState, HWND hwnd,
                    DWORD now)
 {
     const BarsConfig& cfg = Cfg().bars;
     const float trail = trailState.Update(Key(r.id), r.hp, now, cfg.trail);
-    const int barW = small ? S(kSmallBarWidth) : S(kBarWidth);
-    const float mainH = std::round((HealthBarH() + S(kOwnBarGap) + NanoBarH()) * kTargetBarScale);
-    const float barH = small ? std::round(mainH * 2.0f / 3.0f) : mainH;
-    const float edge = static_cast<float>(std::max(2, S(2))); // the outline's thickness, room on every side
-    const float nameH = std::ceil(g_fonts[kFontName].Height());
-    const float barTop = nameH + S(1) + edge;
-    const int w = barW + static_cast<int>(2.0f * edge);
-    const int h = static_cast<int>(std::ceil(barTop + barH + edge));
+    int barW, barH, w, h;
+    TargetSize(small, &barW, &barH, &w, &h);
+    const int inset = FrameInset();
+    const float sections = GameSections(r.life);
+    const uint32_t labelRgb = r.nameRgb == 0xFFFFFF ? kLabelRgb : r.nameRgb;
 
     std::string state;
     char part[96];
-    sprintf_s(part, "%06X %d %d %06X %d %d %.2f|", r.nameRgb, small, r.hp, r.rgb,
-              trail < 0.0f ? -1 : static_cast<int>(trail * barW / 1000.0f), cfg.numbers, g_scale);
+    sprintf_s(part, "%06X %d %.3f %d %06X %d %.2f|", labelRgb, small, sections, r.hp, r.rgb,
+              trail < 0.0f ? -1 : static_cast<int>(trail * barW / 1000.0f), g_scale);
     state += part;
     AppendText(state, r.name);
-    AppendText(state, r.amount);
-    AppendText(state, r.level);
     p.id = r.id;
     Present(p, w, h, x, y, state, hwnd, [&](Canvas& c) {
-        const float fw = static_cast<float>(barW);
-        float left = edge;
-        if (!r.level.empty()) {
-            DrawText(c, kFontValue, r.level, left, 0.0f, r.nameRgb);
-            left += TextWidth(kFontValue, r.level) + S(6);
-        }
-        DrawText(c, kFontName, Fit(kFontName, r.name, edge + fw - left), left, 0.0f, r.nameRgb);
-        // The bar (no health: an empty track) and its numbers, inside the outline's room.
-        Canvas bar;
-        bar.Reset(barW, static_cast<int>(barH));
-        DrawBar(bar, 0.0f, 0.0f, fw, barH, r.hp, trail, r.rgb, nullptr, kFontValue, {});
-        DrawBarText(bar, 0.0f, fw, barH, r.amount, Percent(r.hp, true), cfg.numbers);
-        c.Paste(bar, static_cast<int>(edge), static_cast<int>(barTop));
+        PaintFrame(c);
+        DrawBar(c, inset, inset, barW, barH, r.hp, trail, r.rgb, {}, barW / sections);
+        DrawLabel(c, r.name, labelRgb, inset + barH);
     });
     if (!outline)
         return;
     char layout[64];
-    sprintf_s(layout, "%d %d %.1f %.1f", w, h, barTop, barH);
-    PresentOverlay(p, layout, FadeAlpha(now), [&](Canvas& c) {
-        const float fw = static_cast<float>(barW);
-        const float l = 0.0f, t = barTop - edge, rr = edge + fw + edge, b = barTop + barH + edge;
-        c.RoundRect(l, t, rr, barTop, 0.0f, kOutlineRgb, kOutlineRgb, 1.0f);
-        c.RoundRect(l, barTop + barH, rr, b, 0.0f, kOutlineRgb, kOutlineRgb, 1.0f);
-        c.RoundRect(l, barTop, edge, barTop + barH, 0.0f, kOutlineRgb, kOutlineRgb, 1.0f);
-        c.RoundRect(edge + fw, barTop, rr, barTop + barH, 0.0f, kOutlineRgb, kOutlineRgb, 1.0f);
+    sprintf_s(layout, "%d %d %.2f", w, h, g_scale);
+    PresentOverlay(p, layout, FadeAlpha(now), [&](Canvas& c) { PaintOutline(c); });
+}
+
+// The fight target's target: its name only, in the consider colour.
+void PresentName(Panel& p, const Row& r, HWND hwnd)
+{
+    int w, h;
+    NameSize(&w, &h);
+    const uint32_t rgb = r.nameRgb == 0xFFFFFF ? kLabelRgb : r.nameRgb;
+    std::string state;
+    char part[48];
+    sprintf_s(part, "%06X %.2f|", rgb, g_scale);
+    state += part;
+    AppendText(state, r.name);
+    p.id = r.id;
+    Present(p, w, h, p.homeX, p.homeY, state, hwnd, [&](Canvas& c) {
+        PaintFrame(c);
+        DrawName(c, r.name, rgb, h * 0.5f);
     });
 }
 
-Trail g_fightTrail, g_nanoTrail, g_totTrail;
+Trail g_fightTrail, g_nanoTrail;
 
 // The fight target's panel; the nano target's panel smaller at its own place while there's a fight
 // target, else in the fight target's place at full size. One character as both: the fight target's
-// panel only. The fight target's target (whoever it's targeting, maybe you) small at its own place.
+// panel only. The fight target's target (whoever it's targeting, maybe you): its name only, at its own place.
 void UpdateTargets(HWND hwnd, DWORD now)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -1215,12 +1554,10 @@ void UpdateTargets(HWND hwnd, DWORD now)
         return;
     game::Identity tot{};
     Row totRow{};
-    if (hasFight && cfg.showTargetTarget && n3::TargetOf(fight, &tot) && MakeRow(tot, &totRow)) {
-        PresentTarget(g_tot, totRow, true, false, g_tot.homeX, g_tot.homeY, g_totTrail, hwnd, now);
-    } else {
+    if (hasFight && cfg.showTargetTarget && n3::TargetOf(fight, &tot) && MakeRow(tot, &totRow) && !totRow.name.empty())
+        PresentName(g_tot, totRow, hwnd);
+    else
         Show(g_tot, false);
-        g_totTrail.Update(0, -1, now, false);
-    }
 }
 
 // --- the game's bars ------------------------------------------------------------------------
@@ -1295,6 +1632,8 @@ void Update(HWND hwnd)
     }
     GuiPoint screen{};
     const float k = GuiPerPx(hwnd, &screen);
+    g_screenGuiW = screen.x;
+    g_guiPerPx = k;
     for (Panel* p : g_panels)
         UpdateHome(*p, screen, k);
     UpdateSelf(hwnd, now);

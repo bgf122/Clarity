@@ -12,24 +12,30 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Several hits on one target start side by side and rise straight up from where they happened.
   - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
-  - Readable plates over players, NPCs and pets: the full name centred over a health bar that stretches with it, the level in bold to the left in the bar's colour (classic level colours, one colour of your choice, or by health), and an org/title line, on a faint dark background (adjustable) so they stand out against bright scenery.
-  - Your selected (nano) target and your fight target get bold brackets (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
-  - Optionally a plate over your own character (hidden in first person).
-  - Characters attacking you get slowly blinking red brackets.
-  - Classic style: the game's own look (name only, teal corners on your nano target, red on your fight target, a thin health bar on targets), drawn sharp at any size, with the same sizing, stacking and wall hiding.
+  - Readable plates over players, NPCs and pets: the name over a health bar (classic level colours, one colour of your choice, or by health) in a frame like the bars', with an org/title line under it. The frame's dark background can be turned off.
+  - Your selected (nano) target and your fight target get a coloured frame (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
+  - Characters attacking you get a slowly blinking red border.
   - Ctrl+Shift+U hides the game's interface (windows, chat, bars) and keeps the nameplates and combat text, e.g. for screenshots. The key is set in Clarity.ini (`[Interface] HideUiKey`).
   - Overlapping plates are moved apart calmly and keep their order, they don't bob with walking, and you can click a plate to select that character.
   - Like the game's own tags, plates are hidden behind walls and terrain, but not behind other characters.
   - Switch players, NPCs or pets off to get the game's own tags for them.
   - Works with ao-vk: plates are drawn after its shadows and effects.
-- **Health, nano and target bars** in place of the game's (off by default: Options > Clarity > Bars).
-  - Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
-  - Your fight target's bar, with a slowly pulsing orange outline.
+
+  ![Nameplates: normal plates, your nano target (white), a fight target attacking you (orange, red border), and a character that is both (gold)](docs/images/nameplates.png)
+
+- **Health, nano and target bars** in place of the game's (off by default: Options > Clarity > Frames).
+  - Each in a metal frame with your or the target's name under the bars. Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
+  - Your fight target's bar, with a slowly pulsing orange ring. Target bars show as many sections as the game's target bar for that much health.
   - Your nano target's bar, a little smaller while you have a fight target; it takes the fight target's place when you don't.
-  - A small bar for whoever your fight target is targeting (which can be you).
-  - Above each target bar, its level and name, coloured by how its level compares to yours.
-  - On every bar: the amount, the percent, or both.
+  - The name of whoever your fight target is targeting (which can be you).
+  - Target names are coloured by how the target's level compares to yours.
+  - On your bars: the amount (e.g. 9,350 / 12,950). Target bars have no numbers.
   - Drag a bar to move it. Once the bars are locked, click one to make that character your nano target. The game's own health, nano and target bars come back when you turn Clarity's off.
+
+  ![Frames: your health and nano, the fight target (orange ring), target bars with more sections for more health, and the fight target's target](docs/images/frames.png)
+
+  The pictures are drawn by Clarity's own code; the names and values in them are examples.
+
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
 ## Install
@@ -55,8 +61,8 @@ Close the game and delete `dinput.dll`. You can also delete `Clarity.ini` (your 
 Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs: the file is reloaded automatically. The sections are:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
-- `[Nameplates]`: sizes, what's shown, opacity, font;
-- `[Bars]`: on/off, numbers, target bars, lock, size, and where each bar is.
+- `[Nameplates]`: sizes, what's shown, opacity, background;
+- `[Bars]`: on/off, target bars, lock, size, and where each bar is.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

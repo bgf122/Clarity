@@ -90,11 +90,8 @@ struct Item {
 // Bars page: the field goes last, after section, group, choices and npInt.
 #define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, &BarsConfig::field
 #define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, &BarsConfig::field
-#define BR(field, choices) false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1, nullptr, -1, choices, nullptr, nullptr, nullptr, &BarsConfig::field
 
-const char* const kNpStyles[] = {"Modern", "Classic (the game's look)", nullptr};
 const char* const kBarColors[] = {"Classic (by level)", "Single colour", "By health", nullptr};
-const char* const kBarNumbers[] = {"Amount", "Percentage", "Both", nullptr};
 
 const Item kItems[] = {
     {"CLR_FctEnable", L"Enable", "Improved floating combat text (off = the game's original)", B(enable), "Floating combat text"},
@@ -139,16 +136,14 @@ const Item kItems[] = {
     {"CLR_FctFollowTarget", L"FollowTarget", "Numbers follow their target as it moves", B(followTarget), nullptr},
 
     {"CLR_NpEnable", L"Enable", "Clarity nameplates (off = the game's original)", NB(enable), "Nameplates"},
-    {"CLR_NpStyle", L"Style", "Style:", NR, nullptr, -1, kNpStyles, &NameplateConfig::style},
     {"CLR_NpNaturalSize", L"NaturalSize", "Size in the world (name capitals):", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},
     {"CLR_NpMinPx", L"MinPx", "Smallest on screen:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
     {"CLR_NpMaxPx", L"MaxPx", "Largest on screen:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},
     {"CLR_NpOtherOpacity", L"OtherOpacity", "Opacity of plates other than your target:", NF(otherOpacity, 0.1, 1, "%.0f%%", 100), nullptr},
-    {"CLR_NpBackgroundOpacity", L"BackgroundOpacity", "Background behind the plate:", NF(backgroundOpacity, 0, 1, "%.0f%%", 100), nullptr},
+    {"CLR_NpBackground", L"Background", "Dark background inside the frame", NB(background), nullptr},
     {"CLR_NpTargetScale", L"TargetScale", "Size of your target's plate:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
     {"CLR_NpStack", L"Stack", "Don't let nameplates overlap (farther ones move up)", NB(stack), nullptr},
     {"CLR_NpClickToTarget", L"ClickToTarget", "Left-click a nameplate to select that character", NB(clickToTarget), nullptr},
-    {"CLR_NpShowLevel", L"ShowLevel", "Show level", NB(showLevel), nullptr},
     {"CLR_NpShowOrg", L"ShowOrg", "Show title and organization", NB(showOrg), nullptr},
     {"CLR_NpShowHealth", L"ShowHealth", "Show health bar", NB(showHealth), nullptr},
     {"CLR_NpBarColor", L"BarColor", "Health bar colour:", NR, nullptr, -1, kBarColors, &NameplateConfig::barColor},
@@ -157,13 +152,11 @@ const Item kItems[] = {
     {"CLR_NpShowPlayers", L"ShowPlayers", "Nameplates for players", NB(showPlayers), nullptr},
     {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
-    {"CLR_NpShowSelf", L"ShowSelf", "Nameplate for your own character", NB(showSelf), nullptr},
 
-    {"CLR_BarsEnable", L"Enable", "Clarity bars (off = the game's health, nano and target bars)", BB(enable)},
-    {"CLR_BarsNumbers", L"Numbers", "Numbers on the bars:", BR(numbers, kBarNumbers)},
-    {"CLR_BarsShowTarget", L"ShowTarget", "Bars for your fight target and nano target", BB(showTarget)},
-    {"CLR_BarsShowTargetTarget", L"ShowTargetTarget", "Bar for your fight target's target", BB(showTargetTarget)},
-    {"CLR_BarsLocked", L"Locked", "Lock the bars in place", BB(locked)},
+    {"CLR_BarsEnable", L"Enable", "Clarity frames (off = the game's health, nano and target bars)", BB(enable)},
+    {"CLR_BarsShowTarget", L"ShowTarget", "Frames for your fight target and nano target", BB(showTarget)},
+    {"CLR_BarsShowTargetTarget", L"ShowTargetTarget", "Frame for your fight target's target", BB(showTargetTarget)},
+    {"CLR_BarsLocked", L"Locked", "Lock the frames in place", BB(locked)},
     {"CLR_BarsTrail", L"Trail", "Show health just lost as a light segment that shrinks away", BB(trail)},
     {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
 };
@@ -177,7 +170,6 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef NR
 #undef BB
 #undef BF
-#undef BR
 
 // Latest value per item from the GUI, written to the INI by Flush() on the init thread.
 std::atomic<bool> g_dirty[kItemCount];
@@ -187,11 +179,25 @@ std::atomic<double> g_value[kItemCount];
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
 const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", "CLR_PresetNp", "CLR_PresetBars"};
-const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "bars"};
+const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
 std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
 std::atomic<bool> g_customPage[kPageCount]; // a setting changed: Flush() shows Custom
 thread_local bool t_resetting = false; // Flush() is setting the defaults (not a user change)
+
+// The game's own target bars are in use: false while Clarity's frames replace them ([Bars] Enable and
+// ShowTarget). The game's "Show Nano Target", "Show Fight Target" and "Show Target's Target" options
+// (cc_friendly_health_bar, cc_hostile_health_bar, Targetstarget - the target's target is drawn in
+// those bars' windows, CCTargetControl_c) are greyed out with it: the Root.xml overlay adds it to
+// their view_enable_expression, which the options window re-evaluates when it changes.
+constexpr char kGameTargetBarsVar[] = "CLR_GameTargetBars";
+bool g_gameTargetBars = true;
+
+bool GameTargetBars()
+{
+    const BarsConfig& b = Cfg().bars;
+    return !(b.enable && b.showTarget);
+}
 
 // --- Utils.dll (DistributedValue) -----------------------------------------------------------
 
@@ -310,6 +316,17 @@ void RegisterPreset(const char* var, int value)
     StringCtor(node, var);
     VariantInt(node + 0x20, value);
     node[0x30] = 0; // not saved: worked out from the settings at start
+    AddVariableNode(node, true, true);
+    VariantDtor(node + 0x20);
+    StringDtor(node);
+}
+
+void RegisterFlag(const char* var, bool value)
+{
+    alignas(8) uint8_t node[kValueNodeSize] = {};
+    StringCtor(node, var);
+    VariantBool(node + 0x20, value);
+    node[0x30] = 0; // not saved: worked out from the settings
     AddVariableNode(node, true, true);
     VariantDtor(node + 0x20);
     StringDtor(node);
@@ -476,12 +493,36 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
          "  </ScrollView>\r\n";
 }
 
+// The game's "Show Nano Target", "Show Fight Target" and "Show Target's Target" checkboxes also need
+// kGameTargetBarsVar: their view_enable_expression gets "&& dvalue:CLR_GameTargetBars" (or one is added).
+void GreyGameTargetOptions(std::string& content)
+{
+    for (const char* var : {"opt_variable=\"cc_friendly_health_bar\"", "opt_variable=\"cc_hostile_health_bar\"",
+                            "opt_variable=\"Targetstarget\""}) {
+        const size_t at = content.find(var);
+        if (at == std::string::npos)
+            continue;
+        const size_t open = content.rfind('<', at), close = content.find("/>", at);
+        if (open == std::string::npos || close == std::string::npos)
+            continue;
+        static const char kAttr[] = "view_enable_expression=\"";
+        const size_t attr = content.find(kAttr, open);
+        if (attr != std::string::npos && attr < close) {
+            const size_t end = content.find('"', attr + sizeof(kAttr) - 1);
+            if (end != std::string::npos && end < close)
+                content.insert(end, std::string(" &amp;&amp; dvalue:") + kGameTargetBarsVar);
+        } else {
+            content.insert(close, std::string(" ") + kAttr + "dvalue:" + kGameTargetBarsVar + "\"");
+        }
+    }
+}
+
 std::string TabXml()
 {
     std::string x;
     AppendPage(x, "Floating Combat Text", "clarity_fct_scroll", kPageFct);
     AppendPage(x, "Nameplates", "clarity_np_scroll", kPageNameplates);
-    AppendPage(x, "Bars", "clarity_bars_scroll", kPageBars);
+    AppendPage(x, "Frames", "clarity_bars_scroll", kPageBars);
     return x;
 }
 
@@ -535,6 +576,7 @@ HANDLE Overlay(HANDLE h)
         return h;
     }
     content.insert(root, TabXml());
+    GreyGameTargetOptions(content);
 
     wchar_t dir[MAX_PATH], path[MAX_PATH];
     GetTempPathW(MAX_PATH, dir);
@@ -635,6 +677,8 @@ bool Install()
         Register(item, item.Current());
     for (int page = 0; page < kPageCount; ++page)
         RegisterPreset(kPresetVars[page], PageAtDefaults(page) ? kPresetDefault : kPresetCustom);
+    g_gameTargetBars = GameTargetBars();
+    RegisterFlag(kGameTargetBarsVar, g_gameTargetBars);
     if (!CreateObserver()) {
         Log("[settings] observer creation failed - options tab disabled");
         return false;
@@ -672,6 +716,12 @@ void Flush()
             SetValue(kPresetVars[page], kPresetCustom, false, true);
             t_resetting = false;
         }
+    }
+
+    // Clarity's frames turned on or off (here or in Clarity.ini): the game's target options follow.
+    if (GameTargetBars() != g_gameTargetBars) {
+        g_gameTargetBars = !g_gameTargetBars;
+        SetValue(kGameTargetBarsVar, g_gameTargetBars ? 1.0 : 0.0, true, false);
     }
 
     bool any = false;

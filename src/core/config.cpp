@@ -128,8 +128,6 @@ const char kDefaultIni[] =
     "[Nameplates]\n"
     "; 0 = the game's original name tags\n"
     "Enable=1\n"
-    "; 0 = Modern, 1 = Classic (the game's look - name only, corner marks on targets - sharp at any size)\n"
-    "Style=0\n"
     "; Size of the name's capitals in world units; the result on screen is clamped to MinPx..MaxPx\n"
     "NaturalSize=0.14\n"
     "MinPx=11\n"
@@ -137,30 +135,24 @@ const char kDefaultIni[] =
     "ShowPlayers=1\n"
     "ShowNpcs=1\n"
     "ShowPets=1\n"
-    "; 1 = your own character always has a nameplate (not in first person)\n"
-    "ShowSelf=0\n"
-    "ShowLevel=1\n"
     "; Org / title line\n"
     "ShowOrg=1\n"
     "ShowHealth=1\n"
-    "; Health bar and level colour: 0 = classic (the game's consider colours: grey, green, yellow, red by level\n"
+    "; Health bar colour: 0 = classic (the game's consider colours: grey, green, yellow, red by level\n"
     "; difference), 1 = one colour for all, BarHue (0-360: 0 red, 60 yellow, 120 green, 180 cyan, 240 blue,\n"
     "; 300 magenta), 2 = by health (green at full health, through yellow, to red near death)\n"
     "BarColor=0\n"
     "BarHue=0\n"
     "; Brightness of those colours (0.3-1, 1 = the pure colours)\n"
     "BarBrightness=0.9\n"
-    "; Font and weight (100-900, 400 = regular, 700 = bold). Applied at game start.\n"
-    "Font=Verdana\n"
-    "FontWeight=400\n"
     "; 1 = left-click a nameplate to select that character\n"
     "ClickToTarget=1\n"
     "; 1 = don't let nameplates overlap: farther ones move up above nearer ones\n"
     "Stack=1\n"
     "; Opacity of plates other than your selected / fight target (0.1-1)\n"
     "OtherOpacity=0.9\n"
-    "; Dark panel behind level, name and health bar, so plates stand out on bright backgrounds (0-1, 0 = none)\n"
-    "BackgroundOpacity=0.1\n"
+    "; 1 = a dark panel inside the frame, behind name and health bar (stands out on bright backgrounds)\n"
+    "Background=1\n"
     "; Your selected / fight target's plate is this much bigger than the others (1-2, 1.1 = 10% bigger)\n"
     "TargetScale=1.1\n"
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
@@ -182,8 +174,6 @@ const char kDefaultIni[] =
     "Locked=0\n"
     "; Health just lost shows as a light segment that shrinks away\n"
     "Trail=1\n"
-    "; Numbers on the bars: 0 = amount (8,412 / 12,950), 1 = percent, 2 = both\n"
-    "Numbers=2\n"
     "; Size (0.6-2)\n"
     "Scale=1\n"
     "; Where the bars are (top-left, GUI units); set when you drag one. -1 = the default place.\n"
@@ -377,7 +367,6 @@ void LoadConfig()
     const NameplateConfig dn;
     const wchar_t* ns = L"Nameplates";
     n.enable = ReadFloat(p, ns, L"Enable", dn.enable) != 0.0f;
-    n.style = std::clamp(static_cast<int>(ReadFloat(p, ns, L"Style", static_cast<float>(dn.style))), 0, 1);
     n.naturalSize = ReadFloat(p, ns, L"NaturalSize", dn.naturalSize);
     n.minPx = ReadFloat(p, ns, L"MinPx", dn.minPx);
     n.maxPx = ReadFloat(p, ns, L"MaxPx", dn.maxPx);
@@ -386,19 +375,15 @@ void LoadConfig()
     n.showPlayers = ReadFloat(p, ns, L"ShowPlayers", dn.showPlayers) != 0.0f;
     n.showNpcs = ReadFloat(p, ns, L"ShowNpcs", dn.showNpcs) != 0.0f;
     n.showPets = ReadFloat(p, ns, L"ShowPets", dn.showPets) != 0.0f;
-    n.showSelf = ReadFloat(p, ns, L"ShowSelf", dn.showSelf) != 0.0f;
-    n.showLevel = ReadFloat(p, ns, L"ShowLevel", dn.showLevel) != 0.0f;
     n.showOrg = ReadFloat(p, ns, L"ShowOrg", dn.showOrg) != 0.0f;
     n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
     n.barColor = std::clamp(static_cast<int>(ReadFloat(p, ns, L"BarColor", static_cast<float>(dn.barColor))), 0, 2);
     n.barHue = std::clamp(ReadFloat(p, ns, L"BarHue", dn.barHue), 0.0f, 360.0f);
     n.barBrightness = std::clamp(ReadFloat(p, ns, L"BarBrightness", dn.barBrightness), 0.3f, 1.0f);
-    GetPrivateProfileStringW(ns, L"Font", dn.fontName, n.fontName, 64, p);
-    n.fontWeight = static_cast<int>(ReadFloat(p, ns, L"FontWeight", static_cast<float>(dn.fontWeight)));
     n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);
-    n.backgroundOpacity = ReadFloat(p, ns, L"BackgroundOpacity", dn.backgroundOpacity);
+    n.background = ReadFloat(p, ns, L"Background", dn.background) != 0.0f;
     n.targetScale = std::clamp(ReadFloat(p, ns, L"TargetScale", dn.targetScale), 1.0f, 2.0f);
     n.fadeInSec = ReadFloat(p, ns, L"FadeInSec", dn.fadeInSec);
     n.fadeStart = ReadFloat(p, ns, L"FadeStart", dn.fadeStart);
@@ -430,7 +415,6 @@ void LoadConfig()
         b.showTarget = ReadFloat(p, bs, L"ShowTarget", db.showTarget) != 0.0f;
         b.locked = ReadFloat(p, bs, L"Locked", db.locked) != 0.0f;
         b.trail = ReadFloat(p, bs, L"Trail", db.trail) != 0.0f;
-        b.numbers = std::clamp(static_cast<int>(ReadFloat(p, bs, L"Numbers", static_cast<float>(db.numbers))), 0, 2);
         b.scale = std::clamp(ReadFloat(p, bs, L"Scale", db.scale), 0.6f, 2.0f);
         b.selfX = ReadFloat(p, bs, L"SelfX", db.selfX);
         b.selfY = ReadFloat(p, bs, L"SelfY", db.selfY);

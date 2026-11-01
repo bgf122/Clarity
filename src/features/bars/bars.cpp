@@ -499,12 +499,13 @@ bool g_fontsOk = false;
 
 struct TextMasks {
     raster::Mask fill, outline;
+    raster::Mask halo; // names: a soft dark glow round the letters (they're on the game world)
     float width = 0.0f;
 };
 std::unordered_map<std::wstring, TextMasks> g_text; // key: font id, then the text
 std::unordered_map<uint64_t, Canvas> g_frames;      // painted frames, by size
 
-constexpr int kTextPad = 2;
+constexpr int kTextPad = 6; // room round the letters for the outline and a name's glow
 
 bool EnsureFonts(float scale)
 {
@@ -536,19 +537,29 @@ const TextMasks& Text(FontId font, const std::wstring& s)
     const int w = static_cast<int>(std::ceil(t.width)) + 2 * kTextPad;
     const int h = static_cast<int>(std::ceil(f.Height())) + 2 * kTextPad;
     t.fill = raster::Rasterize(f, s.c_str(), static_cast<int>(s.size()), kTextPad, kTextPad, w, h);
-    t.outline = raster::Dilate(t.fill, 1);
+    // Names stand on the game world, bright or dark: a thicker outline and a soft dark glow.
+    const bool name = font == kFontName;
+    t.outline = raster::Dilate(t.fill, name ? 2 : 1);
+    if (name)
+        t.halo = raster::Shadow(raster::Dilate(t.fill, 3), 0, 3);
     return g_text.emplace(std::move(key), std::move(t)).first->second;
 }
 
-// Outlined text with its top-left at (x, y).
-void DrawText(Canvas& c, FontId font, const std::wstring& s, float x, float y, uint32_t rgb)
+// Outlined text with its top-left at (x, y): its dark layers (glow, outline), its letters, or both.
+enum class TextLayer { Dark, Letters, Both };
+void DrawText(Canvas& c, FontId font, const std::wstring& s, float x, float y, uint32_t rgb, TextLayer layer = TextLayer::Both)
 {
     if (s.empty())
         return;
     const TextMasks& t = Text(font, s);
     const int x0 = static_cast<int>(std::lround(x)) - kTextPad, y0 = static_cast<int>(std::lround(y)) - kTextPad;
-    c.Mask(x0, y0, t.outline, 0x000000, 0.85f);
-    c.Mask(x0, y0, t.fill, rgb, 1.0f);
+    if (layer != TextLayer::Letters) {
+        if (!t.halo.a.empty())
+            c.Mask(x0, y0, t.halo, 0x000000, 0.6f);
+        c.Mask(x0, y0, t.outline, 0x000000, t.halo.a.empty() ? 0.85f : 0.95f);
+    }
+    if (layer != TextLayer::Dark)
+        c.Mask(x0, y0, t.fill, rgb, 1.0f);
 }
 
 float TextWidth(FontId font, const std::wstring& s)
@@ -579,25 +590,16 @@ std::wstring Upper(std::wstring s)
     return s;
 }
 
-// The spaced text cut short with an ellipsis to fit maxW.
-std::wstring FitSpaced(FontId font, std::wstring s, float spacing, float maxW)
-{
-    if (SpacedWidth(font, s, spacing) <= maxW)
-        return s;
-    while (s.size() > 1) {
-        s.pop_back();
-        if (SpacedWidth(font, s + L"\x2026", spacing) <= maxW)
-            return s + L"\x2026";
-    }
-    return s;
-}
-
+// Letter by letter: every letter's dark layers first, so a letter's glow doesn't darken the one before.
 void DrawSpaced(Canvas& c, FontId font, const std::wstring& s, float spacing, float x, float y, uint32_t rgb)
 {
-    for (const wchar_t ch : s) {
-        const std::wstring one(1, ch);
-        DrawText(c, font, one, x, y, rgb);
-        x += TextWidth(font, one) + spacing;
+    for (const TextLayer layer : {TextLayer::Dark, TextLayer::Letters}) {
+        float lx = x;
+        for (const wchar_t ch : s) {
+            const std::wstring one(1, ch);
+            DrawText(c, font, one, lx, y, rgb, layer);
+            lx += TextWidth(font, one) + spacing;
+        }
     }
 }
 
@@ -630,49 +632,6 @@ int Tenths(int value, int max)
         return -1;
     return std::clamp(static_cast<int>(1000.0 * std::min(value, max) / max), 0, 1000);
 }
-
-// Health just lost: a light segment from the new value to the old one that holds a moment and then
-// shrinks away. Further losses meanwhile extend it from where it is.
-struct Trail {
-    static constexpr DWORD kHoldMs = 400;
-    static constexpr float kShrinkMs = 500.0f;
-    uint64_t key = 0;
-    int last = -1;
-    float from = -1.0f;
-    DWORD start = 0;
-
-    float Current(DWORD now, int value) const
-    {
-        if (from < 0.0f)
-            return -1.0f;
-        const DWORD t = now - start;
-        if (t < kHoldMs)
-            return from;
-        const float f = (t - kHoldMs) / kShrinkMs;
-        const float s = from + (value - from) * f;
-        return f < 1.0f && s > value ? s : -1.0f;
-    }
-
-    // The trail's end (tenths, above value) or -1.
-    float Update(uint64_t k, int value, DWORD now, bool on)
-    {
-        if (!on || k != key || value < 0) {
-            key = k;
-            last = value;
-            from = -1.0f;
-            return -1.0f;
-        }
-        if (last >= 0 && value < last) {
-            from = std::max(Current(now, value), static_cast<float>(last));
-            start = now;
-        }
-        last = value;
-        const float cur = Current(now, value);
-        if (cur < 0.0f)
-            from = -1.0f;
-        return cur;
-    }
-};
 
 // The game's own bar colours: the fill image of its health / nano bar (CharacterBar_c makes a
 // PowerbarView_c of background, fill and two end caps: health 0x0E, 0x0D, 0x0F, 0x10; nano 0x12, 0x11,
@@ -799,9 +758,11 @@ struct Panel {
     int w = 0, h = 0;          // content, pixels
     float gw = 0, gh = 0;      // content, GUI units
     float x = -1, y = -1;      // where the window is (top-left, GUI units)
+    float frameX = 0;          // GUI units from the window's left to the frame's (a name wider than the frame)
     float homeX = 0, homeY = 0; // its own place: from [Bars], or the default
     float cfgSeenX = -2, cfgSeenY = -2; // the [Bars] position last taken
     std::string drawn;         // what the texture shows (redrawn when this changes)
+    std::string barsDrawn;     // what its bars show (only their part is sent when just this changes)
     game::Identity id{};       // whom it shows: a click selects them
     // A second surface over the first, for what changes only in strength (the fight target's
     // outline): faded with its alpha, without repainting or sending anything.
@@ -811,11 +772,11 @@ struct Panel {
     float overlayAlpha = 1.0f;
 };
 
-// Sprite sizes: the content at Scale 2 with room to spare.
-Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 544, 256};
-Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 544, 256};
-Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 544, 256};
-Panel g_tot{"fight target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 544, 256};
+// Sprite sizes: the content at Scale 2 with room to spare, and for a long name over the frame.
+Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY, 1024, 256};
+Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 1024, 256};
+Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 1024, 256};
+Panel g_tot{"nano target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 1024, 256};
 Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot};
 bool g_nanoInFightPlace = false; // no fight target: the nano target is shown where the fight target's panel is
 
@@ -831,7 +792,9 @@ void Forget(Panel& p)
     p.windowVtable = nullptr;
     p.w = p.h = 0;
     p.x = p.y = -1;
+    p.frameX = 0;
     p.drawn.clear();
+    p.barsDrawn.clear();
     p.id = {};
     p.overlayDrawn.clear();
     p.overlayAlpha = 1.0f;
@@ -850,7 +813,7 @@ void TargetSize(bool small, int* w, int* h);
 
 // The panel's own place: the [Bars] position when it changed (start, Clarity.ini edited, a drag saved),
 // else the default - either side of the screen's middle, a little below it, the nano target under the
-// fight target and the fight target's target right of it.
+// fight target and the nano target's target under that.
 void UpdateHome(Panel& p, const GuiPoint& screen, float k)
 {
     const BarsConfig& cfg = Cfg().bars;
@@ -960,7 +923,9 @@ void Resize(Panel& p, int w, int h, float k)
 
 // The canvas into the top-left of the sprite (straight alpha; 1555 / 4444 if the GUI's 16-bit surfaces
 // are used), then just that part up, shown at the panel's size. The rest of the sprite isn't shown.
-void Upload(const Panel& p, void* sprite, void* surface, const Canvas& c)
+// With `part` (pixels), only that part of the canvas is written and sent: what changes every tick (a
+// bar's fill, the amounts), without sending the whole panel.
+void Upload(const Panel& p, void* sprite, void* surface, const Canvas& c, const RECT* part = nullptr)
 {
     uint8_t* data = SpriteData(sprite);
     const int stride = SpriteStride(sprite);
@@ -968,9 +933,15 @@ void Upload(const Panel& p, void* sprite, void* surface, const Canvas& c)
     if (!data)
         return;
     const int cw = std::min(c.w, p.texW), chh = std::min(c.h, p.texH);
-    for (int y = 0; y < chh; ++y) {
+    RECT r{0, 0, cw, chh};
+    if (part) {
+        r = {std::max(0L, part->left), std::max(0L, part->top), std::min<LONG>(cw, part->right), std::min<LONG>(chh, part->bottom)};
+        if (r.right <= r.left || r.bottom <= r.top)
+            return;
+    }
+    for (int y = r.top; y < r.bottom; ++y) {
         uint8_t* row = data + static_cast<size_t>(y) * stride;
-        for (int x = 0; x < cw; ++x) {
+        for (int x = r.left; x < r.right; ++x) {
             uint32_t argb = 0;
             const float* s = &c.px[(static_cast<size_t>(y) * c.w + x) * 4];
             const float a = s[3];
@@ -990,6 +961,13 @@ void Upload(const Panel& p, void* sprite, void* surface, const Canvas& c)
                 memcpy(row + x * 2, &v, 2);
             }
         }
+    }
+    if (part) {
+        const GuiRect src{static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right - 1),
+                          static_cast<float>(r.bottom - 1)};
+        const GuiPoint at{static_cast<float>(r.left), static_cast<float>(r.top)};
+        SurfaceUpdate(surface, sprite, &src, &at);
+        return;
     }
     const GuiRect src{0.0f, 0.0f, static_cast<float>(cw - 1), static_cast<float>(chh - 1)};
     const GuiPoint at{0.0f, 0.0f};
@@ -1033,13 +1011,16 @@ void Show(Panel& p, bool show)
         WindowShow(p.window, show);
 }
 
-// Makes the panel if needed, sizes it, puts it at (x, y) (unless it's being dragged), and repaints
-// it when `state` changed.
+// Makes the panel if needed, sizes it, puts its frame at (x, y) (unless it's being dragged; the frame
+// is frameX pixels into the panel), and repaints it: all of it when `state` changed, only barsArea
+// (pixels) when just `bars` did.
 template <typename Paint>
-void Present(Panel& p, int w, int h, float x, float y, const std::string& state, HWND hwnd, Paint&& paint)
+void Present(Panel& p, int w, int h, int frameX, float x, float y, const std::string& state, const std::string& bars,
+             const RECT& barsArea, HWND hwnd, Paint&& paint)
 {
     GuiPoint screen{};
     const float k = GuiPerPx(hwnd, &screen);
+    p.frameX = frameX * k;
     w = std::min(w, p.texW);
     h = std::min(h, p.texH);
     if (!p.window) {
@@ -1052,18 +1033,20 @@ void Present(Panel& p, int w, int h, float x, float y, const std::string& state,
     Resize(p, w, h, k);
     if (g_drag != &p) {
         const float oldX = p.x, oldY = p.y;
-        p.x = x;
+        p.x = x - p.frameX;
         p.y = y;
         Clamp(p, screen);
         if (p.x != oldX || p.y != oldY)
             WindowMoveTo(p.window, p.x, p.y);
     }
-    if (state != p.drawn) {
+    const bool all = state != p.drawn;
+    if (all || bars != p.barsDrawn) {
         Canvas c;
         c.Reset(w, h);
         paint(c);
-        Upload(p, p.sprite, p.surface, c);
+        Upload(p, p.sprite, p.surface, c, all ? nullptr : &barsArea);
         p.drawn = state;
+        p.barsDrawn = bars;
     }
     Show(p, true);
 }
@@ -1175,20 +1158,17 @@ int CapH()
 {
     return static_cast<int>(std::lround(g_fonts[kFontName].Ascent() * 0.72f));
 }
-// From the bars' bottom to the name's middle, and from there to the panel's bottom.
-int LabelAbove()
+// The name's line above the frame (the frame starts under it).
+int NameLineH()
 {
-    return Bezel() + S(13) + CapH() / 2;
-}
-int LabelBlock()
-{
-    return LabelAbove() + CapH() / 2 + S(12) + FrameInner();
+    return CapH() + S(12);
 }
 
+// Your frame, and the panel's height with the name over it.
 void SelfSize(int* w, int* h)
 {
     *w = S(kBarWidth) + 2 * FrameInset();
-    *h = FrameInset() + static_cast<int>(HealthBarH()) + S(kWellGap) + static_cast<int>(NanoBarH()) + LabelBlock();
+    *h = NameLineH() + 2 * FrameInset() + static_cast<int>(HealthBarH()) + S(kWellGap) + static_cast<int>(NanoBarH());
 }
 
 // The game's target health bar (TargetHealthBar_c) tiles a 16-pixel section image along its length,
@@ -1203,13 +1183,14 @@ float GameSections(int maxHealth)
     return std::clamp(std::floor(minW + (maxW - minW) * f), minW, maxW) / 16.0f;
 }
 
-// The main target panel (the fight target, or the nano target in its place) or a small one.
+// The main target frame (the fight target, or the nano target in its place) or a small one, and the
+// panel's height with the name over it.
 void TargetSize(bool small, int* barW, int* barH, int* w, int* h)
 {
     *barW = small ? S(kSmallBarWidth) : S(kBarWidth);
     *barH = small ? S(kSmallBarH) : static_cast<int>(HealthBarH());
     *w = *barW + 2 * FrameInset();
-    *h = FrameInset() + *barH + LabelBlock();
+    *h = NameLineH() + 2 * FrameInset() + *barH;
 }
 void TargetSize(bool small, int* w, int* h)
 {
@@ -1217,7 +1198,8 @@ void TargetSize(bool small, int* w, int* h)
     TargetSize(small, &barW, &barH, w, h);
 }
 
-// A panel with only a name (the fight target's target): as wide as a small target panel.
+// A panel with only a name, inside its frame (the nano target's target): as wide as a small target
+// frame, or wider for a long name.
 void NameSize(int* w, int* h)
 {
     *w = S(kSmallBarWidth) + 2 * FrameInset();
@@ -1283,20 +1265,20 @@ void PaintFrameInto(Canvas& c)
     c.Line(lx0 - S(10), ly + ring * 0.5f, lx0 - S(6), ly - ring * 0.5f, 1.0f, 0x6A6F74, 0.8f);
 }
 
-// The frame for the canvas's size (painted once per size).
-void PaintFrame(Canvas& c)
+// A w x h frame with its top-left at (x, y) (painted once per size).
+void PaintFrame(Canvas& c, int x, int y, int w, int h)
 {
-    const uint64_t key = (static_cast<uint64_t>(c.w) << 32) | static_cast<uint32_t>(c.h);
+    const uint64_t key = (static_cast<uint64_t>(w) << 32) | static_cast<uint32_t>(h);
     auto it = g_frames.find(key);
     if (it == g_frames.end()) {
         if (g_frames.size() > 16)
             g_frames.clear();
         Canvas f;
-        f.Reset(c.w, c.h);
+        f.Reset(w, h);
         PaintFrameInto(f);
         it = g_frames.emplace(key, std::move(f)).first;
     }
-    c.Paste(it->second, 0, 0);
+    c.Paste(it->second, x, y);
 }
 
 // The fill's shading from top to bottom: a bright edge, a light band fading down, the colour, and
@@ -1322,10 +1304,9 @@ std::vector<uint32_t> Gloss(uint32_t rgb)
 
 
 // A bar set into the panel at (x, y): a silver bezel, the track, the filled part glossy with fine
-// vertical lines and a bright edge, the trail lighter, the sections (`section` pixels each, 0 =
-// none), and the amount (your bars).
-void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, float trail, uint32_t rgb, const std::wstring& amount,
-             float section = 0.0f)
+// vertical lines and a bright edge, the sections (`section` pixels each, 0 = none), and the amount
+// (your bars).
+void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, uint32_t rgb, const std::wstring& amount, float section = 0.0f)
 {
     const float b = static_cast<float>(Bezel());
     const float fx = static_cast<float>(x), fy = static_cast<float>(y), fw = static_cast<float>(w), fh = static_cast<float>(h);
@@ -1338,10 +1319,6 @@ void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, float trail, uin
     bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, 0x0B0D10, 0x17191D, 1.0f);
     if (tenths >= 0) {
         const float fill = fw * tenths / 1000.0f;
-        if (trail > tenths) {
-            const uint32_t trailRgb = Canvas::Mix(rgb, 0xFFFFFF, 0.6f);
-            bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, trailRgb, trailRgb, 0.9f, fill, fw * trail / 1000.0f);
-        }
         const std::vector<uint32_t> gloss = Gloss(rgb);
         bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, rgb, rgb, 1.0f, 0.0f, fill, &gloss);
         for (int lx = 2; lx < fill - 1.0f; lx += 3) // fine vertical lines
@@ -1371,80 +1348,86 @@ float NameSpacing()
     return static_cast<float>(std::max(1, S(1)));
 }
 
-// The name in spaced capitals, centred across the panel with its middle at y.
+// The name's width in spaced capitals.
+int NameWidth(const std::wstring& name)
+{
+    return static_cast<int>(std::ceil(SpacedWidth(kFontName, Upper(name), NameSpacing())));
+}
+
+// The name in full, in spaced capitals, centred across the panel with its middle at y.
 void DrawName(Canvas& c, const std::wstring& name, uint32_t rgb, float y)
 {
-    const float spacing = NameSpacing();
-    const std::wstring s = FitSpaced(kFontName, Upper(name), spacing, static_cast<float>(c.w - 2 * FrameInset()));
-    const float x = (c.w - SpacedWidth(kFontName, s, spacing)) * 0.5f;
-    DrawSpaced(c, kFontName, s, spacing, x, CentredTop(kFontName, y), rgb);
+    const std::wstring s = Upper(name);
+    const float x = (c.w - SpacedWidth(kFontName, s, NameSpacing())) * 0.5f;
+    DrawSpaced(c, kFontName, s, NameSpacing(), x, CentredTop(kFontName, y), rgb);
 }
 
-void DrawLabel(Canvas& c, const std::wstring& name, uint32_t rgb, int barsBottom)
+// A panel with the name over a fw-wide frame: its width (the name in full) and where the frame starts.
+void NameOverFrame(const std::wstring& name, int fw, int* w, int* frameX)
 {
-    DrawName(c, name, rgb, static_cast<float>(barsBottom + LabelAbove()));
+    *w = std::max(fw, NameWidth(name) + 2 * kTextPad); // room for the name's glow
+    *frameX = (*w - fw) / 2;
 }
 
-Trail g_selfTrail;
-
-void UpdateSelf(HWND hwnd, DWORD now)
+void UpdateSelf(HWND hwnd)
 {
-    const BarsConfig& cfg = Cfg().bars;
     const game::Identity self{50000, game::ClientInstance()};
     const int health = n3::GetSkill(self, n3::kStatHealth), life = n3::GetSkill(self, n3::kStatLife);
     const int nano = n3::GetSkill(self, n3::kStatNano), maxNano = n3::GetSkill(self, n3::kStatMaxNano);
     const int hp = Tenths(health, life);
     const int np = Tenths(nano, maxNano);
-    const float trail = g_selfTrail.Update(Key(self), hp, now, cfg.trail);
     const std::wstring hpAmount = Amount(health, life);
     const std::wstring npAmount = Amount(nano, maxNano);
     const std::wstring name = PlainName(self);
 
-    int w, h;
-    SelfSize(&w, &h);
-    const int barW = S(kBarWidth), inset = FrameInset();
+    int fw, h, w, frameX;
+    SelfSize(&fw, &h);
+    NameOverFrame(name, fw, &w, &frameX);
+    const int barW = S(kBarWidth), inset = FrameInset(), top = NameLineH();
     const int healthH = static_cast<int>(HealthBarH()), nanoH = static_cast<int>(NanoBarH());
-    const int nanoTop = inset + healthH + S(kWellGap);
+    const int nanoTop = top + inset + healthH + S(kWellGap);
     LoadColours();
 
-    std::string state;
     char part[96];
-    sprintf_s(part, "%d %d %d %.2f|", hp, np, trail < 0.0f ? -1 : static_cast<int>(trail * barW / 1000.0f), g_scale);
-    state += part;
-    AppendText(state, hpAmount);
-    AppendText(state, npAmount);
+    sprintf_s(part, "%d %.2f|", w, g_scale);
+    std::string state = part;
     AppendText(state, name);
+    sprintf_s(part, "%d %d|", hp, np);
+    std::string bars = part;
+    AppendText(bars, hpAmount);
+    AppendText(bars, npAmount);
+    const RECT barsArea{frameX + inset, top + inset, frameX + inset + barW, nanoTop + nanoH};
     g_self.id = self;
-    // Your health over your nano, in the game's colours, with their amounts, and your name.
-    Present(g_self, w, h, g_self.homeX, g_self.homeY, state, hwnd, [&](Canvas& c) {
-        PaintFrame(c);
-        DrawBar(c, inset, inset, barW, healthH, hp, trail, g_healthColours.fill, hpAmount);
-        DrawBar(c, inset, nanoTop, barW, nanoH, np, -1.0f, g_nanoColours.fill, npAmount);
-        DrawLabel(c, name, kLabelRgb, nanoTop + nanoH);
+    // Your name over the frame; in it your health over your nano, in the game's colours, with their
+    // amounts.
+    Present(g_self, w, h, frameX, g_self.homeX, g_self.homeY, state, bars, barsArea, hwnd, [&](Canvas& c) {
+        DrawName(c, name, kLabelRgb, top * 0.5f);
+        PaintFrame(c, frameX, top, fw, h - top);
+        DrawBar(c, frameX + inset, top + inset, barW, healthH, hp, g_healthColours.fill, hpAmount);
+        DrawBar(c, frameX + inset, nanoTop, barW, nanoH, np, g_nanoColours.fill, npAmount);
     });
 }
 
 struct Row {
     game::Identity id;
-    uint32_t nameRgb;
     std::wstring name;
     int hp;      // tenths, -1 = no bar
     int life;    // max health (the bar's length)
     uint32_t rgb;
 };
 
-// The name in the game's consider colours (by level difference); the bar in your health bar's red
-// for every target.
+// The bar in the game's consider colours (by level difference), as the nameplates. (Names are all in
+// kLabelRgb.)
 bool MakeRow(const game::Identity& id, Row* out)
 {
-    Row r{id, nameplates::ConsiderTextRgb(id), PlainName(id), -1, 0, 0};
+    Row r{id, PlainName(id), -1, 0, 0};
     if (id.type == 50000) { // characters; corpses and objects have a name only
         r.life = n3::GetSkill(id, n3::kStatLife);
         r.hp = Tenths(n3::GetSkill(id, n3::kStatHealth), r.life);
     }
     if (r.name.empty() && r.hp < 0)
         return false;
-    r.rgb = g_healthColours.fill;
+    r.rgb = nameplates::ConsiderBarRgb(id);
     *out = std::move(r);
     return true;
 }
@@ -1460,101 +1443,95 @@ float FadeAlpha(DWORD now)
     return 0.5f + 0.5f * std::cos(phase * 6.2831853f);
 }
 
-// The fight target's ring: the frame's inner ring in orange.
-void PaintOutline(Canvas& c)
+// The fight target's ring: the inner ring of the w x h frame at (x, y), in orange.
+void PaintOutline(Canvas& c, int x, int y, int w, int h)
 {
     const float r0 = static_cast<float>(FrameRim() + FrameGap());
-    c.ChamferStroke(r0, r0, c.w - r0, c.h - r0, InnerCut(FrameCut(), r0), static_cast<float>(FrameRing()), kOutlineRgb, 1.0f,
-                    [](float, float) { return true; });
+    c.ChamferStroke(x + r0, y + r0, x + w - r0, y + h - r0, InnerCut(FrameCut(), r0), static_cast<float>(FrameRing()), kOutlineRgb,
+                    1.0f, [](float, float) { return true; });
 }
 
-// A target's panel: its health bar in sections, as the game's target bar, and its name under it in
-// the consider colour; no numbers. The nano target's is smaller while there's a fight target.
-void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, float y, Trail& trailState, HWND hwnd,
-                   DWORD now)
+// A target's panel: its name over the frame, and in the frame its health bar in the consider colour,
+// in sections as the game's target bar; no numbers. The nano target's is smaller while there's a fight
+// target.
+void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, float y, HWND hwnd, DWORD now)
 {
-    const BarsConfig& cfg = Cfg().bars;
-    const float trail = trailState.Update(Key(r.id), r.hp, now, cfg.trail);
-    int barW, barH, w, h;
-    TargetSize(small, &barW, &barH, &w, &h);
-    const int inset = FrameInset();
+    int barW, barH, fw, h, w, frameX;
+    TargetSize(small, &barW, &barH, &fw, &h);
+    NameOverFrame(r.name, fw, &w, &frameX);
+    const int inset = FrameInset(), top = NameLineH();
     const float sections = GameSections(r.life);
-    const uint32_t labelRgb = r.nameRgb == 0xFFFFFF ? kLabelRgb : r.nameRgb;
 
-    std::string state;
     char part[96];
-    sprintf_s(part, "%06X %d %.3f %d %06X %d %.2f|", labelRgb, small, sections, r.hp, r.rgb,
-              trail < 0.0f ? -1 : static_cast<int>(trail * barW / 1000.0f), g_scale);
-    state += part;
+    sprintf_s(part, "%d %d %.3f %.2f|", small, w, sections, g_scale);
+    std::string state = part;
     AppendText(state, r.name);
+    sprintf_s(part, "%d %06X", r.hp, r.rgb);
+    const std::string bars = part;
+    const RECT barsArea{frameX + inset, top + inset, frameX + inset + barW, top + inset + barH};
     p.id = r.id;
-    Present(p, w, h, x, y, state, hwnd, [&](Canvas& c) {
-        PaintFrame(c);
-        DrawBar(c, inset, inset, barW, barH, r.hp, trail, r.rgb, {}, barW / sections);
-        DrawLabel(c, r.name, labelRgb, inset + barH);
+    Present(p, w, h, frameX, x, y, state, bars, barsArea, hwnd, [&](Canvas& c) {
+        DrawName(c, r.name, kLabelRgb, top * 0.5f);
+        PaintFrame(c, frameX, top, fw, h - top);
+        DrawBar(c, frameX + inset, top + inset, barW, barH, r.hp, r.rgb, {}, barW / sections);
     });
     if (!outline)
         return;
     char layout[64];
-    sprintf_s(layout, "%d %d %.2f", w, h, g_scale);
-    PresentOverlay(p, layout, FadeAlpha(now), [&](Canvas& c) { PaintOutline(c); });
+    sprintf_s(layout, "%d %d %d %.2f", w, h, frameX, g_scale);
+    PresentOverlay(p, layout, FadeAlpha(now), [&](Canvas& c) { PaintOutline(c, frameX, top, fw, h - top); });
 }
 
-// The fight target's target: its name only, in the consider colour.
+// The nano target's target: its name only.
 void PresentName(Panel& p, const Row& r, HWND hwnd)
 {
     int w, h;
     NameSize(&w, &h);
-    const uint32_t rgb = r.nameRgb == 0xFFFFFF ? kLabelRgb : r.nameRgb;
+    w = std::max(w, NameWidth(r.name) + 2 * FrameInset());
     std::string state;
     char part[48];
-    sprintf_s(part, "%06X %.2f|", rgb, g_scale);
+    sprintf_s(part, "%.2f|", g_scale);
     state += part;
     AppendText(state, r.name);
     p.id = r.id;
-    Present(p, w, h, p.homeX, p.homeY, state, hwnd, [&](Canvas& c) {
-        PaintFrame(c);
-        DrawName(c, r.name, rgb, h * 0.5f);
+    Present(p, w, h, 0, p.homeX, p.homeY, state, {}, RECT{}, hwnd, [&](Canvas& c) {
+        PaintFrame(c, 0, 0, w, h);
+        DrawName(c, r.name, kLabelRgb, h * 0.5f);
     });
 }
 
-Trail g_fightTrail, g_nanoTrail;
-
 // The fight target's panel; the nano target's panel smaller at its own place while there's a fight
 // target, else in the fight target's place at full size. One character as both: the fight target's
-// panel only. The fight target's target (whoever it's targeting, maybe you): its name only, at its own place.
+// panel only. The nano target's target (whoever it's targeting, maybe you): its name only, at its own place.
 void UpdateTargets(HWND hwnd, DWORD now)
 {
-    const BarsConfig& cfg = Cfg().bars;
     game::Identity fight{}, nano{};
-    const bool hasFight = cfg.showTarget && n3::FightTarget(&fight);
-    const bool hasNano = cfg.showTarget && n3::SelectedTarget(&nano);
+    const bool hasFight = n3::FightTarget(&fight);
+    const bool hasNano = n3::SelectedTarget(&nano);
     const bool same = hasFight && hasNano && Key(fight) == Key(nano);
     Row fightRow{}, nanoRow{};
     const bool fightShown = hasFight && MakeRow(fight, &fightRow);
     const bool nanoShown = hasNano && !same && MakeRow(nano, &nanoRow);
 
     if (fightShown) {
-        PresentTarget(g_fight, fightRow, false, true, g_fight.homeX, g_fight.homeY, g_fightTrail, hwnd, now);
+        PresentTarget(g_fight, fightRow, false, true, g_fight.homeX, g_fight.homeY, hwnd, now);
     } else {
         Show(g_fight, false);
-        g_fightTrail.Update(0, -1, now, false);
     }
     if (g_disabled)
         return;
     if (nanoShown) {
         g_nanoInFightPlace = !fightShown;
         const Panel& home = fightShown ? g_nano : g_fight;
-        PresentTarget(g_nano, nanoRow, fightShown, false, home.homeX, home.homeY, g_nanoTrail, hwnd, now);
+        PresentTarget(g_nano, nanoRow, fightShown, false, home.homeX, home.homeY, hwnd, now);
     } else {
         Show(g_nano, false);
-        g_nanoTrail.Update(0, -1, now, false);
     }
     if (g_disabled)
         return;
     game::Identity tot{};
     Row totRow{};
-    if (hasFight && cfg.showTargetTarget && n3::TargetOf(fight, &tot) && MakeRow(tot, &totRow) && !totRow.name.empty())
+    if (hasNano && n3::TargetOf(nano, &tot) && MakeRow(tot, &totRow) && !totRow.name.empty())
         PresentName(g_tot, totRow, hwnd);
     else
         Show(g_tot, false);
@@ -1565,23 +1542,17 @@ void UpdateTargets(HWND hwnd, DWORD now)
 std::vector<void*> g_hiddenGameBars; // CharBarWindow_c windows Clarity hid
 DWORD g_lastScan = 0;
 
-// Hides the game's health/nano bars (hideSelf) and target bars (hideTargets); gives back the ones
-// Clarity hid that shouldn't be hidden any more.
-void SyncGameBars(void* wc, bool hideSelf, bool hideTargets)
+// Hides the game's health/nano and target bars (hide), or gives back the ones Clarity hid.
+void SyncGameBars(void* wc, bool hide)
 {
-    static const char* const kSelfBars[] = {"CCHealthBarConfig", "CCNanoBarConfig"};
-    static const char* const kTargetBars[] = {"CCFriendlyHealthBarConfig", "CCHostileHealthBarConfig"};
+    static const char* const kBars[] = {"CCHealthBarConfig", "CCNanoBarConfig", "CCFriendlyHealthBarConfig",
+                                        "CCHostileHealthBarConfig"};
     std::vector<void*> hidden;
     ForEachWindow(wc, [&](void* w) {
         if (!IsClass(w, kCharBarClass))
             return;
         const std::string name = ConfigName(w);
-        bool hide;
-        if (name == kSelfBars[0] || name == kSelfBars[1])
-            hide = hideSelf;
-        else if (name == kTargetBars[0] || name == kTargetBars[1])
-            hide = hideTargets;
-        else
+        if (std::find(std::begin(kBars), std::end(kBars), name) == std::end(kBars))
             return;
         const bool ours = std::find(g_hiddenGameBars.begin(), g_hiddenGameBars.end(), w) != g_hiddenGameBars.end();
         if (hide) {
@@ -1623,7 +1594,7 @@ void Update(HWND hwnd)
     const DWORD now = GetTickCount();
     if (now - g_lastScan >= 250) {
         g_lastScan = now;
-        SyncGameBars(wc, on, on && cfg.showTarget);
+        SyncGameBars(wc, on);
     }
     if (!on || !EnsureFonts(cfg.scale)) {
         for (Panel* p : g_panels)
@@ -1636,7 +1607,7 @@ void Update(HWND hwnd)
     g_guiPerPx = k;
     for (Panel* p : g_panels)
         UpdateHome(*p, screen, k);
-    UpdateSelf(hwnd, now);
+    UpdateSelf(hwnd);
     if (!g_disabled)
         UpdateTargets(hwnd, now);
 }
@@ -1659,10 +1630,10 @@ void SavePosition(Panel& p)
     p.y = std::round(p.y);
     WindowMoveTo(p.window, p.x, p.y);
     Panel& home = (&p == &g_nano && g_nanoInFightPlace) ? g_fight : p;
-    home.homeX = p.x;
+    home.homeX = std::round(p.x + p.frameX); // the frame's place
     home.homeY = p.y;
     wchar_t v[32];
-    swprintf_s(v, L"%.0f", p.x);
+    swprintf_s(v, L"%.0f", home.homeX);
     WritePrivateProfileStringW(L"Bars", home.keyX, v, ConfigPath().c_str());
     swprintf_s(v, L"%.0f", p.y);
     WritePrivateProfileStringW(L"Bars", home.keyY, v, ConfigPath().c_str());

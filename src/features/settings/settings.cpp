@@ -143,9 +143,6 @@ const Item kItems[] = {
     {"CLR_NpBackground", L"Background", "Dark background inside the frame", NB(background), nullptr},
     {"CLR_NpTargetScale", L"TargetScale", "Size of your target's plate:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
     {"CLR_NpStack", L"Stack", "Don't let nameplates overlap (farther ones move up)", NB(stack), nullptr},
-    {"CLR_NpClickToTarget", L"ClickToTarget", "Left-click a nameplate to select that character", NB(clickToTarget), nullptr},
-    {"CLR_NpShowOrg", L"ShowOrg", "Show title and organization", NB(showOrg), nullptr},
-    {"CLR_NpShowHealth", L"ShowHealth", "Show health bar", NB(showHealth), nullptr},
     {"CLR_NpBarColor", L"BarColor", "Health bar colour:", NR, nullptr, -1, kBarColors, &NameplateConfig::barColor},
     {"CLR_NpBarHue", L"BarHue", "Single colour (hue):", NF(barHue, 0, 360, "%.0f", 1), nullptr},
     {"CLR_NpBarBrightness", L"BarBrightness", "Health bar colour brightness:", NF(barBrightness, 0.3, 1, "%.0f%%", 100), nullptr},
@@ -153,11 +150,8 @@ const Item kItems[] = {
     {"CLR_NpShowNpcs", L"ShowNpcs", "Nameplates for NPCs and monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Nameplates for pets", NB(showPets), nullptr},
 
-    {"CLR_BarsEnable", L"Enable", "Clarity frames (off = the game's health, nano and target bars)", BB(enable)},
-    {"CLR_BarsShowTarget", L"ShowTarget", "Frames for your fight target and nano target", BB(showTarget)},
-    {"CLR_BarsShowTargetTarget", L"ShowTargetTarget", "Frame for your fight target's target", BB(showTargetTarget)},
-    {"CLR_BarsLocked", L"Locked", "Lock the frames in place", BB(locked)},
-    {"CLR_BarsTrail", L"Trail", "Show health just lost as a light segment that shrinks away", BB(trail)},
+    {"CLR_BarsEnable", L"Enable", "Enabled", BB(enable)},
+    {"CLR_BarsLocked", L"Locked", "Locked", BB(locked)},
     {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
@@ -178,15 +172,15 @@ std::atomic<double> g_value[kItemCount];
 // "Settings: Default / Custom" at the top of each page (kPage*). Choosing Default
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
-const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", "CLR_PresetNp", "CLR_PresetBars"};
+// (The Frames page has none: just on/off, locked and size.)
+const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", "CLR_PresetNp", nullptr};
 const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
 std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
 std::atomic<bool> g_customPage[kPageCount]; // a setting changed: Flush() shows Custom
 thread_local bool t_resetting = false; // Flush() is setting the defaults (not a user change)
 
-// The game's own target bars are in use: false while Clarity's frames replace them ([Bars] Enable and
-// ShowTarget). The game's "Show Nano Target", "Show Fight Target" and "Show Target's Target" options
+// The game's own target bars are in use: false while Clarity's frames replace them ([Bars] Enable). The game's "Show Nano Target", "Show Fight Target" and "Show Target's Target" options
 // (cc_friendly_health_bar, cc_hostile_health_bar, Targetstarget - the target's target is drawn in
 // those bars' windows, CCTargetControl_c) are greyed out with it: the Root.xml overlay adds it to
 // their view_enable_expression, which the options window re-evaluates when it changes.
@@ -196,7 +190,7 @@ bool g_gameTargetBars = true;
 bool GameTargetBars()
 {
     const BarsConfig& b = Cfg().bars;
-    return !(b.enable && b.showTarget);
+    return !b.enable;
 }
 
 // --- Utils.dll (DistributedValue) -----------------------------------------------------------
@@ -359,7 +353,7 @@ void __fastcall OnDValueChanged(void* /*self*/, void* /*edx*/, const void* name,
     if (!n || strncmp(n, "CLR_", 4) != 0)
         return;
     for (int page = 0; page < kPageCount; ++page) {
-        if (strcmp(n, kPresetVars[page]) == 0) {
+        if (kPresetVars[page] && strcmp(n, kPresetVars[page]) == 0) {
             if (!t_resetting && static_cast<int>(VariantAsDouble(value) + 0.5) == kPresetDefault)
                 g_resetPage[page].store(true); // handled by Flush(), outside the DValue lock
             return;
@@ -404,6 +398,8 @@ bool CreateObserver()
         StringDtor(name);
     }
     for (const char* var : kPresetVars) {
+        if (!var)
+            continue;
         alignas(8) uint8_t name[kStringSize] = {};
         StringCtor(name, var);
         Observe(obj, name);
@@ -430,19 +426,22 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
     x += page;
     x += "\" font=\"HUGE\" layout_borders=\"Rect(0,0,0,5)\" />\r\n"
          "        <TextView value=\"Changes apply at once. Settings are saved to Clarity.ini (fonts and colours are set there).\" font=\"LARGE\" layout_borders=\"Rect(0,0,0,10)\" />\r\n"
-         "        <OptionRadioButtonGroup label=\"Settings:\" layout_borders=\"Rect(10,0,0,5)\" opt_type=\"variant\" opt_variable=\"";
-    x += kPresetVars[pageIndex];
-    x += "\">\r\n";
-    for (int c = 0; kPresetChoices[c]; ++c) {
-        char value[16];
-        sprintf_s(value, "%d", c);
-        x += "          <RadioButton label=\"";
-        x += kPresetChoices[c];
-        x += "\" value=\"";
-        x += value;
-        x += "\"/>\r\n";
+         "";
+    if (kPresetVars[pageIndex]) {
+        x += "        <OptionRadioButtonGroup label=\"Settings:\" layout_borders=\"Rect(10,0,0,5)\" opt_type=\"variant\" opt_variable=\"";
+        x += kPresetVars[pageIndex];
+        x += "\">\r\n";
+        for (int c = 0; kPresetChoices[c]; ++c) {
+            char value[16];
+            sprintf_s(value, "%d", c);
+            x += "          <RadioButton label=\"";
+            x += kPresetChoices[c];
+            x += "\" value=\"";
+            x += value;
+            x += "\"/>\r\n";
+        }
+        x += "        </OptionRadioButtonGroup>\r\n";
     }
-    x += "        </OptionRadioButtonGroup>\r\n";
     for (const Item& item : kItems) {
         if (item.Page() != pageIndex)
             continue;
@@ -675,8 +674,10 @@ bool Install()
 
     for (const Item& item : kItems)
         Register(item, item.Current());
-    for (int page = 0; page < kPageCount; ++page)
-        RegisterPreset(kPresetVars[page], PageAtDefaults(page) ? kPresetDefault : kPresetCustom);
+    for (int page = 0; page < kPageCount; ++page) {
+        if (kPresetVars[page])
+            RegisterPreset(kPresetVars[page], PageAtDefaults(page) ? kPresetDefault : kPresetCustom);
+    }
     g_gameTargetBars = GameTargetBars();
     RegisterFlag(kGameTargetBarsVar, g_gameTargetBars);
     if (!CreateObserver()) {
@@ -711,7 +712,7 @@ void Flush()
     }
     // A setting changed by hand: the page is Custom now.
     for (int page = 0; page < kPageCount; ++page) {
-        if (g_customPage[page].exchange(false)) {
+        if (g_customPage[page].exchange(false) && kPresetVars[page]) {
             t_resetting = true; // (not a choice of Default either way)
             SetValue(kPresetVars[page], kPresetCustom, false, true);
             t_resetting = false;

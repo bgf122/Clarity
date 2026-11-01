@@ -135,9 +135,6 @@ const char kDefaultIni[] =
     "ShowPlayers=1\n"
     "ShowNpcs=1\n"
     "ShowPets=1\n"
-    "; Org / title line\n"
-    "ShowOrg=1\n"
-    "ShowHealth=1\n"
     "; Health bar colour: 0 = classic (the game's consider colours: grey, green, yellow, red by level\n"
     "; difference), 1 = one colour for all, BarHue (0-360: 0 red, 60 yellow, 120 green, 180 cyan, 240 blue,\n"
     "; 300 magenta), 2 = by health (green at full health, through yellow, to red near death)\n"
@@ -145,8 +142,6 @@ const char kDefaultIni[] =
     "BarHue=0\n"
     "; Brightness of those colours (0.3-1, 1 = the pure colours)\n"
     "BarBrightness=0.9\n"
-    "; 1 = left-click a nameplate to select that character\n"
-    "ClickToTarget=1\n"
     "; 1 = don't let nameplates overlap: farther ones move up above nearer ones\n"
     "Stack=1\n"
     "; Opacity of plates other than your selected / fight target (0.1-1)\n"
@@ -165,15 +160,8 @@ const char kDefaultIni[] =
     "[Bars]\n"
     "; 1 = Clarity's health/nano and target bars instead of the game's; 0 = the game's bars\n"
     "Enable=0\n"
-    "; Bars for your fight target and your nano target (the nano target's is smaller while you have a fight\n"
-    "; target, and takes the fight target's place when you don't)\n"
-    "ShowTarget=1\n"
-    "; A small bar for whom your fight target is targeting (maybe you)\n"
-    "ShowTargetTarget=1\n"
-    "; 1 = the bars can't be dragged\n"
+    "; 1 = the bars can't be dragged; a click on one selects whom it shows\n"
     "Locked=0\n"
-    "; Health just lost shows as a light segment that shrinks away\n"
-    "Trail=1\n"
     "; Size (0.6-2)\n"
     "Scale=1\n"
     "; Where the bars are (top-left, GUI units); set when you drag one. -1 = the default place.\n"
@@ -375,12 +363,9 @@ void LoadConfig()
     n.showPlayers = ReadFloat(p, ns, L"ShowPlayers", dn.showPlayers) != 0.0f;
     n.showNpcs = ReadFloat(p, ns, L"ShowNpcs", dn.showNpcs) != 0.0f;
     n.showPets = ReadFloat(p, ns, L"ShowPets", dn.showPets) != 0.0f;
-    n.showOrg = ReadFloat(p, ns, L"ShowOrg", dn.showOrg) != 0.0f;
-    n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
     n.barColor = std::clamp(static_cast<int>(ReadFloat(p, ns, L"BarColor", static_cast<float>(dn.barColor))), 0, 2);
     n.barHue = std::clamp(ReadFloat(p, ns, L"BarHue", dn.barHue), 0.0f, 360.0f);
     n.barBrightness = std::clamp(ReadFloat(p, ns, L"BarBrightness", dn.barBrightness), 0.3f, 1.0f);
-    n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);
     n.background = ReadFloat(p, ns, L"Background", dn.background) != 0.0f;
@@ -412,9 +397,7 @@ void LoadConfig()
         const BarsConfig db;
         const wchar_t* bs = L"Bars";
         b.enable = ReadFloat(p, bs, L"Enable", db.enable) != 0.0f;
-        b.showTarget = ReadFloat(p, bs, L"ShowTarget", db.showTarget) != 0.0f;
         b.locked = ReadFloat(p, bs, L"Locked", db.locked) != 0.0f;
-        b.trail = ReadFloat(p, bs, L"Trail", db.trail) != 0.0f;
         b.scale = std::clamp(ReadFloat(p, bs, L"Scale", db.scale), 0.6f, 2.0f);
         b.selfX = ReadFloat(p, bs, L"SelfX", db.selfX);
         b.selfY = ReadFloat(p, bs, L"SelfY", db.selfY);
@@ -424,7 +407,6 @@ void LoadConfig()
         b.nanoY = ReadFloat(p, bs, L"NanoY", db.nanoY);
         b.totX = ReadFloat(p, bs, L"TotX", db.totX);
         b.totY = ReadFloat(p, bs, L"TotY", db.totY);
-        b.showTargetTarget = ReadFloat(p, bs, L"ShowTargetTarget", db.showTargetTarget) != 0.0f;
     }
 
     {

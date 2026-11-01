@@ -102,13 +102,10 @@ struct NameplateConfig {
     bool showPlayers = true;
     bool showNpcs = true;
     bool showPets = true;
-    bool showOrg = true;       // org / title line
-    bool showHealth = true;
     int barColor = 0;          // health bar colour: 0 classic (the game's consider colours by level
                                // difference), 1 one colour (barHue), 2 by health (green -> yellow -> red)
     float barHue = 0.0f;       // hue for barColor 1, degrees: 0 red, 120 green, 240 blue
     float barBrightness = 0.9f;  // health bar colours this bright (1 = the pure colours)
-    bool clickToTarget = true; // left-click a plate to select that character
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target
     bool background = true;    // a dark panel inside the frame, behind name and bar
@@ -125,16 +122,13 @@ struct NameplateConfig {
 // Health / nano and target bars: Clarity's own panels in place of the game's bar windows.
 struct BarsConfig {
     bool enable = false;           // on = Clarity's bars in place of the game's health, nano and target bars
-    bool showTarget = true;        // the fight target's and nano target's panels
-    bool locked = false;           // panels can't be dragged
-    bool trail = true;             // health just lost shows as a light segment that shrinks away
+    bool locked = false;           // panels can't be dragged (a click selects whom one shows)
     float scale = 1.0f;            // panel size (0.6-2)
     // Positions (GUI units, top-left), saved when a panel is dragged; -1 = the default place.
     float selfX = -1.0f, selfY = -1.0f;
     float targetX = -1.0f, targetY = -1.0f; // the fight target (and the nano target when there's none)
     float nanoX = -1.0f, nanoY = -1.0f;     // the nano target while there's a fight target
-    float totX = -1.0f, totY = -1.0f;       // the fight target's target
-    bool showTargetTarget = true;           // a bar for whom your fight target is targeting
+    float totX = -1.0f, totY = -1.0f;       // the nano target's target
 };
 
 // A key with modifiers; vk 0 = none.

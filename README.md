@@ -12,7 +12,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Several hits on one target start side by side and rise straight up from where they happened.
   - Per category, you choose whose numbers you see (yours, your pet's, other players'). Other players' special attack and perk names are hidden, and nano damage with no known source is never shown.
 - **Nameplates.**
-  - Readable plates over players, NPCs and pets: the name over a health bar (classic level colours, one colour of your choice, or by health) in a frame like the bars', with an org/title line under it. The frame's dark background can be turned off.
+  - Readable plates over players, NPCs and pets: the name (with its title) in a frame like the bars', and the org under it. Your nano and fight targets' plates also have a health bar (classic level colours, one colour of your choice, or by health). The frame's dark background can be turned off.
   - Your selected (nano) target and your fight target get a coloured frame (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
   - Characters attacking you get a slowly blinking red border.
   - Ctrl+Shift+U hides the game's interface (windows, chat, bars) and keeps the nameplates and combat text, e.g. for screenshots. The key is set in Clarity.ini (`[Interface] HideUiKey`).
@@ -23,16 +23,17 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
 
   ![Nameplates: normal plates, your nano target (white), a fight target attacking you (orange, red border), and a character that is both (gold)](docs/images/nameplates.png)
 
-- **Health, nano and target bars** in place of the game's (off by default: Options > Clarity > Frames).
-  - Each in a metal frame with your or the target's name under the bars. Your health over your nano, in your interface skin's colours (health a deeper red). Health you just lost shows as a lighter piece that shrinks away.
-  - Your fight target's bar, with a slowly pulsing orange ring. Target bars show as many sections as the game's target bar for that much health.
-  - Your nano target's bar, a little smaller while you have a fight target; it takes the fight target's place when you don't.
-  - The name of whoever your fight target is targeting (which can be you).
-  - Target names are coloured by how the target's level compares to yours.
-  - On your bars: the amount (e.g. 9,350 / 12,950). Target bars have no numbers.
-  - Drag a bar to move it. Once the bars are locked, click one to make that character your nano target. The game's own health, nano and target bars come back when you turn Clarity's off.
+- **Frames** in place of the game's health, nano and target bars (off by default: Options > Clarity > Frames).
+  - Metal frames for you, your fight target and your nano target, each with the name above it in full, readable on bright and dark ground.
+  - Your health over your nano, in your interface skin's colours (health a deeper red), with the amounts (e.g. 9,350 / 12,950).
+  - Target health bars are coloured by how the target's level compares to yours, in the game's colours, and have as many sections as the game's target bar for that much health. No numbers.
+  - Your fight target's frame has a slowly pulsing orange ring. Your nano target's frame is a little smaller while you have a fight target, and takes the fight target's place when you don't.
+  - A small frame with the name of whoever your nano target is targeting (which can be you).
+  - Drag a frame to move it. Once the frames are locked, click one to make that character your nano target.
+  - While the frames are on, the game's own bars are hidden and its Show Nano Target / Show Fight Target / Show Target's Target options are greyed out. Turn the frames off to get them back.
+  - Settings: Enabled, Locked and Size.
 
-  ![Frames: your health and nano, the fight target (orange ring), target bars with more sections for more health, and the fight target's target](docs/images/frames.png)
+  ![Frames: your health and nano, the fight target (orange ring), target bars in level colours with more sections for more health, and the nano target's target, on bright and dark ground](docs/images/frames.png)
 
   The pictures are drawn by Clarity's own code; the names and values in them are examples.
 
@@ -62,7 +63,7 @@ Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
 - `[Nameplates]`: sizes, what's shown, opacity, background;
-- `[Bars]`: on/off, target bars, lock, size, and where each bar is.
+- `[Bars]`: the frames: on/off, locked, size, and where each frame is.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

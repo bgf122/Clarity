@@ -355,11 +355,9 @@ std::vector<TextRun> NameRuns(const game::Identity& id, uint8_t* ind)
 {
     const uint32_t base = NameRgb(id, ind);
     std::string before, after;
-    if (Cfg().np.showOrg) {
-        const std::string title = n3::Title(id);
-        if (!title.empty())
-            before = title + " ";
-    }
+    const std::string title = n3::Title(id);
+    if (!title.empty())
+        before = title + " ";
     if (id.type == kTypeCharacter && !n3::IsNpc(id)) {
         const int pvp = n3::GetSkill(id, kStatPvpFlags);
         const int marks = n3::GetSkill(id, kStatNameMarks);
@@ -449,8 +447,6 @@ void FillRect(std::vector<uint32_t>& px, int x0, int y0, int w, int h, uint32_t 
 // the game's tag.)
 float OrgLine(Canvas& c, const game::Identity& id, float y, float* halfW)
 {
-    if (!Cfg().np.showOrg)
-        return y;
     const std::string second = n3::Org(id);
     if (second.empty())
         return y;
@@ -565,9 +561,10 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     const std::vector<TextRun> name = FitRuns(g_nameFont, NameRuns(id, ind), maxW);
     const float nameW = RunsWidth(g_nameFont, name);
 
-    // The health bar under the name: as wide as the name, at least g_barW.
+    // Your nano and fight target's plates: the health bar under the name, as wide as the name, at
+    // least g_barW. Other plates have the name only.
     bool bar = false;
-    if (cfg.showHealth && !corpse) {
+    if (p.role != Role::Normal && !corpse) {
         const int life = n3::GetSkill(id, n3::kStatLife);
         bar = life > 0 && life != n3::kNoValue;
     }
@@ -1472,7 +1469,7 @@ uint8_t* PlateAt(int x, int y)
 bool HandleClick(HWND /*hwnd*/, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
 {
     const NameplateConfig& cfg = Cfg().np;
-    if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) && cfg.enable && cfg.clickToTarget &&
+    if ((msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) && cfg.enable &&
         GetCurrentThreadId() == g_gameThread && g_setTarget && !(wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL))) {
         // Only clicks on the 3D world: none of the game's GUI windows is under the mouse.
         void* wc = g_windowController ? g_windowController() : nullptr;
@@ -1523,11 +1520,11 @@ uint32_t HealthBarRgb(const game::Identity& id, int tenths)
     return Soften(rgb);
 }
 
-uint32_t ConsiderTextRgb(const game::Identity& id)
+uint32_t ConsiderBarRgb(const game::Identity& id)
 {
     bool considerable = false;
     const uint32_t rgb = ConsiderRgb(id, &considerable);
-    return considerable ? rgb : 0xFFFFFF;
+    return considerable ? Soften(rgb) : 0xAAAAAA;
 }
 
 bool PlateTop(uint32_t type, uint32_t instance, float* top)

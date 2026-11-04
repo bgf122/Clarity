@@ -215,6 +215,11 @@ bool LineOfSight(const Vec3& from, const Vec3& to, bool* known)
     return g_lineOfSight(playfield, &from, &to, -1, false);
 }
 
+const void* CurrentPlayfield()
+{
+    return g_getPlayfield ? g_getPlayfield() : nullptr;
+}
+
 Vec3 WorldDirToView(const Vec3& d)
 {
     const float* v = g_view;

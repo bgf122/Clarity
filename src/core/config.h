@@ -96,6 +96,7 @@ struct FctConfig {
 
 struct NameplateConfig {
     bool enable = true;
+    int style = 0;             // 0 Classic (the plate in a frame, as the bars), 1 Modern (0.1.14's plates)
     float naturalSize = 0.14f; // world height of the name's capitals before clamping
     float minPx = 11.0f;       // name capitals on screen never smaller than this ...
     float maxPx = 20.0f;       // ... or larger than this
@@ -105,6 +106,17 @@ struct NameplateConfig {
     bool stack = true;         // move overlapping plates apart
     float otherOpacity = 0.9f; // plates other than the selected / fight target
     float targetScale = 1.1f;  // selected / fight-target plates this much bigger than the others
+    // Modern only (back to these when Classic is picked):
+    float backgroundOpacity = 0.1f; // dark panel behind level, name and bar (0 = none)
+    bool clickToTarget = true;      // left-click a plate to select that character (Classic: always)
+    bool showLevel = true;
+    bool showOrg = true;            // title and org (Classic: always)
+    bool showHealth = true;         // a bar on every plate (Classic: on target plates)
+    bool showSelf = false;          // your own character always has a plate (hidden in first person)
+    int barColor = 0;               // health bar and level colour: 0 by level (the game's consider colours), 1 by health
+    float barBrightness = 0.9f;     // health bar and level colours this bright (1 = the pure colours)
+    wchar_t fontName[64] = L"Verdana"; // the GUI's TrueType face; read at game start
+    int fontWeight = 400;
     float fadeInSec = 0.25f;
     float fadeStart = 28.0f;   // metres from you; fully faded at the game's 30 m tag range
     // NPCFamily values that are pets: players' pets 95-98 (98: MP pets), 221 the Devileet vanity pet.
@@ -136,11 +148,20 @@ struct InterfaceConfig {
     Hotkey hideUi; // hides the game's interface and shows it again ([Interface] HideUiKey)
 };
 
+// Scenery effects left out ([Effects]); ids are Setupf/gfxtweak.bin's.
+struct EffectsConfig {
+    bool hideShipSmoke = true; // the glowing smoke under the alien ships, in every zone (effect 12530)
+    int hide[32] = {};         // more effect ids to leave out
+    int hideCount = 0;
+    bool debug = false; // log each scenery effect id once
+};
+
 struct Config {
     FctConfig fct;
     NameplateConfig np;
     BarsConfig bars;
     InterfaceConfig ui;
+    EffectsConfig effects;
 };
 
 // Current settings. Written only by LoadConfig (init thread); read by the game thread.

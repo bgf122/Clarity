@@ -128,6 +128,8 @@ const char kDefaultIni[] =
     "[Nameplates]\n"
     "; 0 = the game's original name tags\n"
     "Enable=1\n"
+    "; 0 = Classic (the name in a frame, as the bars), 1 = Modern (level, name over a health bar, brackets)\n"
+    "Style=0\n"
     "; Size of the name's capitals in world units; the result on screen is clamped to MinPx..MaxPx\n"
     "NaturalSize=0.14\n"
     "MinPx=11\n"
@@ -141,6 +143,24 @@ const char kDefaultIni[] =
     "OtherOpacity=0.9\n"
     "; Your selected / fight target's plate is this much bigger than the others (1-2, 1.1 = 10% bigger)\n"
     "TargetScale=1.1\n"
+    "; Modern style only:\n"
+    "; Dark panel behind level, name and health bar (0-1, 0 = none)\n"
+    "BackgroundOpacity=0.1\n"
+    "; 1 = left-click a nameplate to select that character\n"
+    "ClickToTarget=1\n"
+    "ShowLevel=1\n"
+    "; Title and org\n"
+    "ShowOrg=1\n"
+    "ShowHealth=1\n"
+    "; 1 = your own character always has a nameplate (not in first person)\n"
+    "ShowSelf=0\n"
+    "; Health bar and level colour: 0 = by level (the game's consider colours), 1 = by health\n"
+    "BarColor=0\n"
+    "; Brightness of those colours (0.3-1, 1 = the pure colours)\n"
+    "BarBrightness=0.9\n"
+    "; Font and weight (100-900, 400 = regular, 700 = bold). Applied at game start.\n"
+    "Font=Verdana\n"
+    "FontWeight=400\n"
     "; Fade in when a plate appears (s), and fade out from FadeStart metres to the game's 30 m range\n"
     "FadeInSec=0.25\n"
     "FadeStart=28\n"
@@ -168,7 +188,15 @@ const char kDefaultIni[] =
     "[Interface]\n"
     "; Key that hides the game's interface (windows, chat, bars) and shows it again; nameplates and\n"
     "; floating text stay. Ctrl, Shift, Alt and a letter, digit or F1-F12, e.g. Ctrl+Shift+U. Empty = no key.\n"
-    "HideUiKey=Ctrl+Shift+U\n";
+    "HideUiKey=Ctrl+Shift+U\n"
+    "\n"
+    "[Effects]\n"
+    "; 1 = hide the glowing smoke under the alien ships (ICC Shuttleport, Serenity Islands...; very heavy on the GPU)\n"
+    "HideShipSmoke=1\n"
+    "; More scenery effects to hide (effect ids, comma-separated; see Debug)\n"
+    "Hide=\n"
+    "; 1 = log each scenery effect's id once (to find one to hide)\n"
+    "Debug=0\n";
 
 // "Ctrl+Shift+U", "Alt+F12", "Ctrl+7": modifiers and one key; vk 0 if not understood.
 Hotkey ParseHotkey(const wchar_t* text)
@@ -346,6 +374,7 @@ void LoadConfig()
     const NameplateConfig dn;
     const wchar_t* ns = L"Nameplates";
     n.enable = ReadFloat(p, ns, L"Enable", dn.enable) != 0.0f;
+    n.style = std::clamp(static_cast<int>(ReadFloat(p, ns, L"Style", static_cast<float>(dn.style))), 0, 1);
     n.naturalSize = ReadFloat(p, ns, L"NaturalSize", dn.naturalSize);
     n.minPx = ReadFloat(p, ns, L"MinPx", dn.minPx);
     n.maxPx = ReadFloat(p, ns, L"MaxPx", dn.maxPx);
@@ -357,6 +386,16 @@ void LoadConfig()
     n.stack = ReadFloat(p, ns, L"Stack", dn.stack) != 0.0f;
     n.otherOpacity = ReadFloat(p, ns, L"OtherOpacity", dn.otherOpacity);
     n.targetScale = std::clamp(ReadFloat(p, ns, L"TargetScale", dn.targetScale), 1.0f, 2.0f);
+    n.backgroundOpacity = ReadFloat(p, ns, L"BackgroundOpacity", dn.backgroundOpacity);
+    n.clickToTarget = ReadFloat(p, ns, L"ClickToTarget", dn.clickToTarget) != 0.0f;
+    n.showLevel = ReadFloat(p, ns, L"ShowLevel", dn.showLevel) != 0.0f;
+    n.showOrg = ReadFloat(p, ns, L"ShowOrg", dn.showOrg) != 0.0f;
+    n.showHealth = ReadFloat(p, ns, L"ShowHealth", dn.showHealth) != 0.0f;
+    n.showSelf = ReadFloat(p, ns, L"ShowSelf", dn.showSelf) != 0.0f;
+    n.barColor = std::clamp(static_cast<int>(ReadFloat(p, ns, L"BarColor", static_cast<float>(dn.barColor))), 0, 1);
+    n.barBrightness = std::clamp(ReadFloat(p, ns, L"BarBrightness", dn.barBrightness), 0.3f, 1.0f);
+    GetPrivateProfileStringW(ns, L"Font", dn.fontName, n.fontName, 64, p);
+    n.fontWeight = static_cast<int>(ReadFloat(p, ns, L"FontWeight", static_cast<float>(dn.fontWeight)));
     n.fadeInSec = ReadFloat(p, ns, L"FadeInSec", dn.fadeInSec);
     n.fadeStart = ReadFloat(p, ns, L"FadeStart", dn.fadeStart);
     {
@@ -403,6 +442,26 @@ void LoadConfig()
         ui.hideUi = ParseHotkey(key);
         if (key[0] && !ui.hideUi.vk)
             Log("[cfg] HideUiKey '%ls' not understood - no key", key);
+    }
+
+    {
+        EffectsConfig& e = g_bufs[next].effects;
+        const EffectsConfig de;
+        e.debug = ReadFloat(p, L"Effects", L"Debug", de.debug) != 0.0f;
+        e.hideShipSmoke = ReadFloat(p, L"Effects", L"HideShipSmoke", de.hideShipSmoke) != 0.0f;
+        wchar_t list[256];
+        GetPrivateProfileStringW(L"Effects", L"Hide", L"", list, 256, p);
+        e.hideCount = 0;
+        for (wchar_t* cur = list; *cur && e.hideCount < 32;) {
+            wchar_t* end = nullptr;
+            const long v = wcstol(cur, &end, 10);
+            if (end == cur) {
+                ++cur;
+                continue;
+            }
+            e.hide[e.hideCount++] = static_cast<int>(v);
+            cur = end;
+        }
     }
 
     g_cur.store(next, std::memory_order_release);

@@ -2,6 +2,18 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.16
+
+### Nameplates
+- **Styles:** pick **Classic** (the framed plates, default) or **Modern** (the 0.1.14 look: the level beside the name, a health bar with the percentage on every plate, corner brackets on your targets, in Verdana).
+- **Modern options:** Background Opacity, Enable Targeting, Show Level, Show Title and Organization, Show Health Bar, Show Own Nameplate, Healthbar Style (Level or Health) and Brightness.
+  - They are greyed out while Classic is picked, and go back to their defaults when you pick Classic.
+  - **Show Own Nameplate** puts a plate over your own character (not in first person), even with Players switched off.
+
+### Misc
+- **New page** in Options → Clarity.
+- **Hide Alien Smoke Particles** (on by default): hides the glowing smoke clouds under the alien ships at the ICC Shuttleport, ICC Assembly Hall, Serenity Islands, the Superior Organization HQs and elsewhere. They are very heavy on the graphics card, and none of the game's options remove them. Switching it takes effect at once.
+
 ## 0.1.15
 
 ### Frames (the bars)

@@ -59,6 +59,9 @@ Vec3 CameraWorldPos();
 // buildings) blocks the line. Characters don't count. False with *known = false when unavailable.
 bool LineOfSight(const Vec3& from, const Vec3& to, bool* known);
 
+// n3Playfield_t::GetPlayfield(): the current playfield (changes with the zone); nullptr if unavailable.
+const void* CurrentPlayfield();
+
 // DisplaySystem: GfxVisualDiaBill::Init(const DiaBill_n::Sprite_t*, int)
 void DiaBillInit(void* visual, const void* sprites, int count);
 

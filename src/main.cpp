@@ -6,6 +6,7 @@
 #include "core/log.h"
 #include "core/wndproc.h"
 #include "features/bars/bars.h"
+#include "features/effects/effects.h"
 #include "features/fct/fct.h"
 #include "features/hideui/hideui.h"
 #include "features/nameplates/nameplates.h"
@@ -60,6 +61,7 @@ DWORD WINAPI InitThread(void*)
         prk::bars::Install(); // (before the nameplates: a click on a panel isn't a click on a plate)
         prk::nameplates::Install();
         prk::hideui::Install();
+        prk::effects::Install();
         prk::settings::Install();
     } else {
         prk::Log("init failed - no features enabled");

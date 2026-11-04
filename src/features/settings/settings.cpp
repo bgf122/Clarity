@@ -21,7 +21,7 @@ namespace {
 // --- the settings shown on the page -------------------------------------------------------
 
 // The Clarity tab's pages.
-constexpr int kPageFct = 0, kPageNameplates = 1, kPageBars = 2, kPageCount = 3;
+constexpr int kPageFct = 0, kPageNameplates = 1, kPageBars = 2, kPageMisc = 3, kPageCount = 4;
 
 struct Item {
     const char* var;       // DValue name
@@ -37,17 +37,24 @@ struct Item {
     double scale;
     const char* section;   // heading printed before this item, or nullptr
     int group = -1;        // combat-log category index (kCombatGroups), instead of a field
+    const char* const* choices = nullptr; // radio buttons (values 0, 1, ...), null-terminated labels ...
+    int NameplateConfig::*npInt = nullptr; // ... for this field
     bool BarsConfig::*brBool = nullptr;    // Frames page
     float BarsConfig::*brFloat = nullptr;
+    bool modern = false;   // Nameplates: Modern style only (greyed out in Classic, and reset to its default)
+    bool EffectsConfig::*efBool = nullptr; // Misc page
 
     const wchar_t* IniSection() const
     {
         if (group >= 0)
             return L"CombatLog";
-        static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars"};
+        static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars", L"Effects"};
         return kSections[Page()];
     }
-    int Page() const { return (brBool || brFloat) ? kPageBars : (npBool || npFloat) ? kPageNameplates : kPageFct; }
+    int Page() const
+    {
+        return efBool ? kPageMisc : (brBool || brFloat) ? kPageBars : (npBool || npFloat || npInt) ? kPageNameplates : kPageFct;
+    }
     double Current() const { return Value(Cfg()); }
     double Default() const
     {
@@ -66,10 +73,14 @@ struct Item {
             return c.fct.*floatField;
         if (npBool)
             return c.np.*npBool ? 1.0 : 0.0;
+        if (npInt)
+            return c.np.*npInt;
         if (npFloat)
             return c.np.*npFloat;
         if (brBool)
             return c.bars.*brBool ? 1.0 : 0.0;
+        if (efBool)
+            return c.effects.*efBool ? 1.0 : 0.0;
         return c.bars.*brFloat;
     }
 };
@@ -79,9 +90,17 @@ struct Item {
 #define NB(field) true, nullptr, nullptr, &NameplateConfig::field, nullptr, 0, 1, nullptr, 1
 #define NF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, &NameplateConfig::field, lo, hi, fmt, scale
 #define G true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1
-// Frames page: the field goes last, after section and group.
-#define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, &BarsConfig::field
-#define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, &BarsConfig::field
+#define NR false, nullptr, nullptr, nullptr, nullptr, 0, 0, nullptr, 1 // radio buttons: section, group, choices, npInt follow
+// Nameplates, Modern style only: after the field, its section.
+#define MODERN(section) section, -1, nullptr, nullptr, nullptr, nullptr, true
+// Frames page: the field goes last, after section, group, choices and npInt.
+#define BB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, &BarsConfig::field
+#define BF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, &BarsConfig::field
+// Misc page: the field goes last.
+#define EB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, &EffectsConfig::field
+
+const char* const kNpStyles[] = {"Classic", "Modern", nullptr};
+const char* const kBarStyles[] = {"Level", "Health", nullptr};
 
 const Item kItems[] = {
     {"CLR_FctEnable", L"Enable", "Enabled", B(enable), "Floating combat text"},
@@ -126,12 +145,21 @@ const Item kItems[] = {
     {"CLR_FctFollowTarget", L"FollowTarget", "Numbers follow their target as it moves", B(followTarget), nullptr},
 
     {"CLR_NpEnable", L"Enable", "Enabled", NB(enable), nullptr},
+    {"CLR_NpStyle", L"Style", "Style:", NR, nullptr, -1, kNpStyles, &NameplateConfig::style},
     {"CLR_NpNaturalSize", L"NaturalSize", "Size:", NF(naturalSize, 0.05, 0.4, "%.2f m", 1), nullptr},
     {"CLR_NpMinPx", L"MinPx", "Minimum Size:", NF(minPx, 6, 30, "%.0f px", 1), nullptr},
     {"CLR_NpMaxPx", L"MaxPx", "Maximum Size:", NF(maxPx, 8, 48, "%.0f px", 1), nullptr},
     {"CLR_NpOtherOpacity", L"OtherOpacity", "Opacity:", NF(otherOpacity, 0.1, 1, "%.0f%%", 100), nullptr},
     {"CLR_NpTargetScale", L"TargetScale", "Target Nameplate Size:", NF(targetScale, 1, 2, "%.0f%%", 100), nullptr},
     {"CLR_NpStack", L"Stack", "Overlapping nameplates", NB(stack), nullptr},
+    {"CLR_NpBackgroundOpacity", L"BackgroundOpacity", "Background Opacity:", NF(backgroundOpacity, 0, 1, "%.0f%%", 100), MODERN(nullptr)},
+    {"CLR_NpClickToTarget", L"ClickToTarget", "Enable Targeting", NB(clickToTarget), MODERN(nullptr)},
+    {"CLR_NpShowLevel", L"ShowLevel", "Show Level", NB(showLevel), MODERN(nullptr)},
+    {"CLR_NpShowOrg", L"ShowOrg", "Show Title and Organization", NB(showOrg), MODERN(nullptr)},
+    {"CLR_NpShowHealth", L"ShowHealth", "Show Health Bar", NB(showHealth), MODERN(nullptr)},
+    {"CLR_NpShowSelf", L"ShowSelf", "Show Own Nameplate", NB(showSelf), MODERN(nullptr)},
+    {"CLR_NpBarColor", L"BarColor", "Healthbar Style:", NR, nullptr, -1, kBarStyles, &NameplateConfig::barColor, nullptr, nullptr, true},
+    {"CLR_NpBarBrightness", L"BarBrightness", "Brightness:", NF(barBrightness, 0.3, 1, "%.0f%%", 100), MODERN(nullptr)},
     {"CLR_NpShowPlayers", L"ShowPlayers", "Players", NB(showPlayers), "Nameplates:"},
     {"CLR_NpShowNpcs", L"ShowNpcs", "NPCs and Monsters", NB(showNpcs), nullptr},
     {"CLR_NpShowPets", L"ShowPets", "Pets", NB(showPets), nullptr},
@@ -139,6 +167,8 @@ const Item kItems[] = {
     {"CLR_BarsEnable", L"Enable", "Enabled", BB(enable)},
     {"CLR_BarsLocked", L"Locked", "Locked", BB(locked)},
     {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
+
+    {"CLR_HideShipSmoke", L"HideShipSmoke", "Hide Alien Smoke Particles", EB(hideShipSmoke)},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 
@@ -147,8 +177,11 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef NB
 #undef NF
 #undef G
+#undef NR
+#undef MODERN
 #undef BB
 #undef BF
+#undef EB
 
 // Latest value per item from the GUI, written to the INI by Flush() on the init thread.
 std::atomic<bool> g_dirty[kItemCount];
@@ -158,8 +191,8 @@ std::atomic<double> g_value[kItemCount];
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
 // (Only the Floating Combat Text page has one.)
-const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", nullptr, nullptr};
-const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames"};
+const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", nullptr, nullptr, nullptr};
+const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames", "misc"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
 std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
 std::atomic<bool> g_customPage[kPageCount]; // a setting changed: Flush() shows Custom
@@ -176,6 +209,16 @@ bool GameTargetBars()
 {
     const BarsConfig& b = Cfg().bars;
     return !b.enable;
+}
+
+// The Modern nameplate style is picked: its options (Item::modern) are enabled with it, through their
+// view_enable_expression. Picking Classic also puts them back to their defaults.
+constexpr char kNpModernVar[] = "CLR_NpModern";
+bool g_npModern = false;
+
+bool NpModern()
+{
+    return Cfg().np.style == 1;
 }
 
 // --- Utils.dll (DistributedValue) -----------------------------------------------------------
@@ -254,9 +297,11 @@ void Register(const Item& item, double value)
 {
     alignas(8) uint8_t node[kValueNodeSize] = {};
     StringCtor(node, item.var);
-    const bool ranged = !item.isBool;
+    const bool ranged = !item.isBool && !item.choices;
     if (item.isBool) {
         VariantBool(node + 0x20, value != 0.0);
+    } else if (item.choices) {
+        VariantInt(node + 0x20, static_cast<int>(value)); // radio buttons hold ints
     } else {
         VariantDouble(node + 0x20, value);
         VariantDouble(node + 0x38, item.min);
@@ -435,12 +480,30 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
             x += item.section;
             x += "\" layout_borders=\"Rect(10,6,0,2)\" />\r\n";
         }
-        if (item.isBool) {
+        // Modern-only options are greyed out while Classic is picked.
+        const std::string enable = item.modern ? std::string(" view_enable_expression=\"dvalue:") + kNpModernVar + "\"" : "";
+        if (item.choices) {
+            x += "        <OptionRadioButtonGroup label=\"";
+            x += item.label;
+            x += "\" layout_borders=\"Rect(10,3,0,3)\" opt_type=\"variant\" opt_variable=\"";
+            x += item.var;
+            x += "\"" + enable + ">\r\n";
+            for (int c = 0; item.choices[c]; ++c) {
+                char value[16];
+                sprintf_s(value, "%d", c);
+                x += "          <RadioButton label=\"";
+                x += item.choices[c];
+                x += "\" value=\"";
+                x += value;
+                x += "\"/>\r\n";
+            }
+            x += "        </OptionRadioButtonGroup>\r\n";
+        } else if (item.isBool) {
             x += "        <OptionCheckBox label=\"";
             x += item.label;
             x += "\" layout_borders=\"Rect(10,0,0,0)\" opt_type=\"variant\" opt_variable=\"";
             x += item.var;
-            x += "\"/>\r\n";
+            x += "\"" + enable + "/>\r\n";
         } else {
             char scale[32];
             sprintf_s(scale, "%g", item.scale);
@@ -452,7 +515,7 @@ void AppendPage(std::string& x, const char* page, const char* scrollName, int pa
             x += item.fmt;
             x += "&lt;/font&gt;\" value_scale=\"";
             x += scale;
-            x += "\"/>\r\n";
+            x += "\"" + enable + "/>\r\n";
         }
     }
     x += "        <VLayoutSpacer/>\r\n"
@@ -491,6 +554,7 @@ std::string TabXml()
     AppendPage(x, "Floating Combat Text", "clarity_fct_scroll", kPageFct);
     AppendPage(x, "Nameplates", "clarity_np_scroll", kPageNameplates);
     AppendPage(x, "Frames", "clarity_bars_scroll", kPageBars);
+    AppendPage(x, "Misc", "clarity_misc_scroll", kPageMisc);
     return x;
 }
 
@@ -649,6 +713,8 @@ bool Install()
     }
     g_gameTargetBars = GameTargetBars();
     RegisterFlag(kGameTargetBarsVar, g_gameTargetBars);
+    g_npModern = NpModern();
+    RegisterFlag(kNpModernVar, g_npModern);
     if (!CreateObserver()) {
         Log("[settings] observer creation failed - options tab disabled");
         return false;
@@ -673,7 +739,7 @@ void Flush()
         t_resetting = true;
         for (const Item& item : kItems) {
             if (item.Page() == page)
-                SetValue(item.var, item.Default(), item.isBool, false);
+                SetValue(item.var, item.Default(), item.isBool, item.choices != nullptr);
         }
         t_resetting = false;
         g_customPage[page].store(false);
@@ -693,6 +759,18 @@ void Flush()
         g_gameTargetBars = !g_gameTargetBars;
         SetValue(kGameTargetBarsVar, g_gameTargetBars ? 1.0 : 0.0, true, false);
     }
+    // The nameplate style changed: the Modern options follow; back to Classic, they're reset.
+    if (NpModern() != g_npModern) {
+        g_npModern = !g_npModern;
+        SetValue(kNpModernVar, g_npModern ? 1.0 : 0.0, true, false);
+        if (!g_npModern) {
+            for (const Item& item : kItems) {
+                if (item.modern && std::fabs(item.Current() - item.Default()) > 1e-6)
+                    SetValue(item.var, item.Default(), item.isBool, item.choices != nullptr);
+            }
+            Log("[settings] Classic nameplates: Modern options back to their defaults");
+        }
+    }
 
     bool any = false;
     for (int i = 0; i < kItemCount; ++i) {
@@ -703,6 +781,8 @@ void Flush()
         wchar_t text[32];
         if (item.isBool)
             swprintf_s(text, L"%d", v != 0.0 ? 1 : 0);
+        else if (item.choices)
+            swprintf_s(text, L"%d", static_cast<int>(v + 0.5));
         else
             swprintf_s(text, L"%.3g", v);
         WritePrivateProfileStringW(item.IniSection(), item.key, text, ConfigPath().c_str());

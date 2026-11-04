@@ -15,6 +15,7 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Readable plates over players, NPCs and pets: the name (with its title) in a frame like the bars', and the org under it. Your nano and fight targets' plates also have a health bar, in the game's colours by level.
   - Your selected (nano) target and your fight target get a coloured frame (white, orange, gold when they are the same character), are drawn a little bigger than other plates (adjustable), and stay visible beyond the 30 m tag range, up to 80 m.
   - Characters attacking you get a slowly blinking red border.
+  - Two styles: **Classic** (the framed plates above) and **Modern** (the earlier look: the level beside the name, a health bar with the percentage on every plate, corner brackets on your targets, in the game's Verdana). Modern has its own options: background opacity, click to select, level, title and organization, health bar, a plate over your own character, bar colour by level or by health, and brightness.
   - Ctrl+Shift+U hides the game's interface (windows, chat, bars) and keeps the nameplates and combat text, e.g. for screenshots. The key is set in Clarity.ini (`[Interface] HideUiKey`).
   - Overlapping plates are moved apart calmly and keep their order, they don't bob with walking, and you can click a plate to select that character.
   - Like the game's own tags, plates are hidden behind walls and terrain, but not behind other characters.
@@ -36,6 +37,8 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   ![Frames: your health and nano, the fight target (orange ring), target bars in level colours with more sections for more health, and the nano target's target, on bright and dark ground](docs/images/frames.png)
 
   The pictures are drawn by Clarity's own code; the names and values in them are examples.
+
+- **Hide alien smoke** (Options > Clarity > Misc, on by default): the glowing smoke clouds under the alien ships (ICC Shuttleport, ICC Assembly Hall, Serenity Islands, the Superior Organization HQs and more) are very heavy on the graphics card and none of the game's options remove them. Switching it takes effect at once.
 
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
@@ -62,8 +65,9 @@ Close the game and delete `dinput.dll`. You can also delete `Clarity.ini` (your 
 Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs: the file is reloaded automatically. The sections are:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
-- `[Nameplates]`: on/off, sizes, opacity, overlapping, and which plates (players, NPCs, pets);
-- `[Bars]`: the frames: on/off, locked, size, and where each frame is.
+- `[Nameplates]`: on/off, style, sizes, opacity, overlapping, which plates (players, NPCs, pets), and the Modern style's options;
+- `[Bars]`: the frames: on/off, locked, size, and where each frame is;
+- `[Effects]`: hiding the alien smoke, and other scenery effects by id.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

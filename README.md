@@ -40,6 +40,8 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
 
 - **Hide alien smoke** (Options > Clarity > Misc, on by default): the glowing smoke clouds under the alien ships (ICC Shuttleport, ICC Assembly Hall, Serenity Islands, the Superior Organization HQs and more) are very heavy on the graphics card and none of the game's options remove them. Switching it takes effect at once.
 
+- **Green rooms on alien mission maps** (Options > Clarity > Misc, on by default): in the alien mission zones the game draws the map's rooms black on the black map. Clarity draws them in green, with or without ao-vk.
+
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
 ## Install
@@ -67,7 +69,7 @@ Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs:
 - `[Colors]`: per-colour overrides;
 - `[Nameplates]`: on/off, style, sizes, opacity, overlapping, which plates (players, NPCs, pets), and the Modern style's options;
 - `[Bars]`: the frames: on/off, locked, size, and where each frame is;
-- `[Effects]`: hiding the alien smoke, and other scenery effects by id.
+- `[Effects]`: hiding the alien smoke, other scenery effects by id, and the alien mission map's green rooms.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

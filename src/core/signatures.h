@@ -43,6 +43,12 @@
 // Client VA 0x10024E14.
 #define SIG_NAMETAG_BUILD "GUI.dll", "B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 81 EC E0 00 00 00 53 56 57 8B F9 8B 77 18"
 
+// GUI.dll: in PFMapGroundRenderer_c's dungeon room loop (client 0x10046E28), the call that draws one
+// room tile: mov ecx,ebx / ... / call 0x10046871 (the E8 at +8; __thiscall(viewport, RTexture_t*,
+// uv rect*, screen rect*, ARGB), ret 0x14) / mov ecx,edi / call [RTexture_t::ReleaseRTexture].
+// Client VA 0x10047167.
+#define SIG_PFMAP_ROOM_TILE "GUI.dll", "8B CB D8 65 9C D9 5D 9C E8 ?? ?? ?? ?? 8B CF FF 15 ?? ?? ?? ?? 8D 4D 90 C6 45 FC 03"
+
 // GUI.dll: nametag Indicator per-frame update, int (Indicator* ecx); 0 = delete the tag.
 // Positions the sprite at N3Msg_GetIndicatorPosition.
 // Client VA 0x10024D5B.

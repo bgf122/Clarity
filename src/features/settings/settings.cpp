@@ -169,6 +169,7 @@ const Item kItems[] = {
     {"CLR_BarsScale", L"Scale", "Size:", BF(scale, 0.6, 2, "%.0f%%", 100)},
 
     {"CLR_HideShipSmoke", L"HideShipSmoke", "Hide Alien Smoke Particles", EB(hideShipSmoke)},
+    {"CLR_AlienMap", L"AlienMap", "Green Rooms on Alien Mission Maps", EB(alienMap)},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 

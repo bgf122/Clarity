@@ -404,6 +404,15 @@ void* CreateTextureARGB(const char* name, int width, int height)
     return tex;
 }
 
+bool TextureSize(void* texture, int* width, int* height)
+{
+    if (!texture || !g_textureWidth || !g_textureHeight)
+        return false;
+    *width = g_textureWidth(texture);
+    *height = g_textureHeight(texture);
+    return true;
+}
+
 bool WriteTexture(void* texture, const uint32_t* pixels, int width, int height)
 {
     if (!g_lockTexture || !g_unlockTexture)

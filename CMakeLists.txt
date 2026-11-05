@@ -44,6 +44,7 @@ add_library(clarity SHARED
     src/features/hideui/hideui.cpp
     src/features/bars/bars.cpp
     src/features/effects/effects.cpp
+    src/features/pfmap/pfmap.cpp
     ${CMAKE_BINARY_DIR}/generated/clarity.rc
 )
 set_target_properties(clarity PROPERTIES OUTPUT_NAME dinput)

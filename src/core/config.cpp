@@ -195,7 +195,11 @@ const char kDefaultIni[] =
     "HideShipSmoke=1\n"
     "; More scenery effects to hide (effect ids, comma-separated; see Debug)\n"
     "Hide=\n"
-    "; 1 = log each scenery effect's id once (to find one to hide)\n"
+    "; 1 = on the map in alien mission zones, rooms in green (the game draws them black on black)\n"
+    "AlienMap=1\n"
+    "; 1 = every dungeon and mission map's rooms in that green (to try AlienMap anywhere)\n"
+    "AlienMapTest=0\n"
+    "; 1 = log each scenery effect's id once (to find one to hide), and each map room-tile size\n"
     "Debug=0\n";
 
 // "Ctrl+Shift+U", "Alt+F12", "Ctrl+7": modifiers and one key; vk 0 if not understood.
@@ -449,6 +453,8 @@ void LoadConfig()
         const EffectsConfig de;
         e.debug = ReadFloat(p, L"Effects", L"Debug", de.debug) != 0.0f;
         e.hideShipSmoke = ReadFloat(p, L"Effects", L"HideShipSmoke", de.hideShipSmoke) != 0.0f;
+        e.alienMap = ReadFloat(p, L"Effects", L"AlienMap", de.alienMap) != 0.0f;
+        e.alienMapTest = ReadFloat(p, L"Effects", L"AlienMapTest", de.alienMapTest) != 0.0f;
         wchar_t list[256];
         GetPrivateProfileStringW(L"Effects", L"Hide", L"", list, 256, p);
         e.hideCount = 0;

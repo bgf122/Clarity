@@ -7,6 +7,7 @@
 #include "core/wndproc.h"
 #include "features/bars/bars.h"
 #include "features/effects/effects.h"
+#include "features/pfmap/pfmap.h"
 #include "features/fct/fct.h"
 #include "features/hideui/hideui.h"
 #include "features/nameplates/nameplates.h"
@@ -62,6 +63,7 @@ DWORD WINAPI InitThread(void*)
         prk::nameplates::Install();
         prk::hideui::Install();
         prk::effects::Install();
+        prk::pfmap::Install();
         prk::settings::Install();
     } else {
         prk::Log("init failed - no features enabled");

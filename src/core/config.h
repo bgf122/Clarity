@@ -153,7 +153,9 @@ struct EffectsConfig {
     bool hideShipSmoke = true; // the glowing smoke under the alien ships, in every zone (effect 12530)
     int hide[32] = {};         // more effect ids to leave out
     int hideCount = 0;
-    bool debug = false; // log each scenery effect id once
+    bool alienMap = true;      // alien mission zones' map: rooms in green instead of black on black
+    bool alienMapTest = false; // every dungeon map's rooms in that green (to try it outside alien zones)
+    bool debug = false; // log each scenery effect id once, and each map room-tile size
 };
 
 struct Config {

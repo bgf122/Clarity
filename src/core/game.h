@@ -78,6 +78,9 @@ bool SwapDiaBillMaterial(void* visual, void* material);
 // Objects are allocated with the game's CRT (msvcr100) like the game's own and never freed.
 void* CreateTextureARGB(const char* name, int width, int height);
 
+// RTexture_t::GetWidth / GetHeight. False if they aren't available.
+bool TextureSize(void* texture, int* width, int* height);
+
 // Lock (write-only), copy width*height ARGB pixels row by row, unlock.
 bool WriteTexture(void* texture, const uint32_t* pixels, int width, int height);
 

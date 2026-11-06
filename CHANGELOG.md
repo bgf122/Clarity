@@ -2,6 +2,24 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.17
+
+### Minimap (new, off by default)
+- **A round minimap** in place of the game's local map: Options → Clarity → **Minimap**.
+  - It shows what the game's local map shows, at the same scale: dungeon rooms, the ground outdoors, and the game's own markers and arrows, updated as often as the game's.
+  - **Compass:** N, E, S and W on the frame, a light marker on the outer rim pointing the way you face, and a gold marker on the inner ring pointing at your mission when it's in the same playfield.
+  - **+ / −** zoom from 75% to 150%.
+  - **The layers button** switches to the planet map you picked in the game's planet map window. There, + and − step through its levels like the planet map's own zoom. Inside a building or dungeon it shows where you went in.
+  - **Moving it:** drag it anywhere. Once it's locked, dragging inside it looks around the map, and a click centres it on you again.
+  - **The game's map button and key** show and hide it, the same for all your characters. The game's own local map window stays closed while the minimap is on. The planet map still opens as before.
+  - Settings: Enabled, Locked, Size and Opacity.
+
+### Frames
+- **Movable timer bars (off by default):** untick **Timer Bars Locked** to drag the game's timer bars (attack, nano, perk, item...) anywhere. While they're unlocked, a gold bar shows where they start, so you can move them without an action running. Lock them again once they're placed.
+
+### Misc
+- **Show Alien Mission Layout (off by default):** in alien mission zones the game draws the map's rooms black on the black map. Clarity draws them in a dark green, with or without ao-vk.
+
 ## 0.1.16
 
 ### Nameplates

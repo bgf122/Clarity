@@ -38,9 +38,19 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
 
   The pictures are drawn by Clarity's own code; the names and values in them are examples.
 
+- **Minimap** (off by default: Options > Clarity > Minimap): a round map in place of the game's local map.
+  - It draws what the game's local map draws, at the same scale: dungeon rooms, outdoor ground, and the same markers and arrows. They update as often as the game's do.
+  - A compass on its frame: N, E, S and W, a light marker on the outer rim pointing the way you face, and a gold marker on the inner ring pointing at your mission when it's in the same playfield.
+  - **+ / −** zoom from 75% to 150%. The **layers** button switches to the planet map, the one you picked in the game's planet map window. There, + and − step through its levels like the planet map's own zoom. Inside a dungeon or building, it shows where you went in, or the dungeon's own map if your map pack has one.
+  - Drag it to move it. Once it's locked, dragging inside it looks around, and a click centres it on you again.
+  - The game's map button and key show and hide it, and its own local map window stays closed. The planet map still opens.
+  - Settings: Enabled, Locked, Size and Opacity.
+
+- **Movable timer bars** (off by default: untick **Timer Bars Locked** in Options > Clarity > Frames): drag the game's timer bars (attack, nano, perk, item...) where you want them. While they're unlocked, a gold bar shows where they start, so there's always something to drag. Lock them again once they're placed.
+
 - **Hide alien smoke** (Options > Clarity > Misc, on by default): the glowing smoke clouds under the alien ships (ICC Shuttleport, ICC Assembly Hall, Serenity Islands, the Superior Organization HQs and more) are very heavy on the graphics card and none of the game's options remove them. Switching it takes effect at once.
 
-- **Green rooms on alien mission maps** (Options > Clarity > Misc, on by default): in the alien mission zones the game draws the map's rooms black on the black map. Clarity draws them in green, with or without ao-vk.
+- **Show alien mission layout** (Options > Clarity > Misc, off by default): in the alien mission zones the game draws the map's rooms black on the black map. Clarity draws them in green, with or without ao-vk.
 
 - **Settings tab.** The game's Options window gets a **Clarity** tab, and changes apply immediately. Everything is also in `Clarity.ini`: fonts, colours and the finer settings.
 
@@ -68,8 +78,9 @@ Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs:
 - `[FloatingText]`: sizes, timing, outline, which categories are shown, font;
 - `[Colors]`: per-colour overrides;
 - `[Nameplates]`: on/off, style, sizes, opacity, overlapping, which plates (players, NPCs, pets), and the Modern style's options;
-- `[Bars]`: the frames: on/off, locked, size, and where each frame is;
-- `[Effects]`: hiding the alien smoke, other scenery effects by id, and the alien mission map's green rooms.
+- `[Bars]`: the frames: on/off, locked, size, and where each frame is; the timer bars: locked and where they are;
+- `[Effects]`: hiding the alien smoke, other scenery effects by id, and the alien mission map's green rooms;
+- `[Minimap]`: on/off, locked, shown, size, opacity, zoom, layer, the planet map's level, and where it is.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

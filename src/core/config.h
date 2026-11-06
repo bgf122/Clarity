@@ -136,6 +136,10 @@ struct BarsConfig {
     float targetX = -1.0f, targetY = -1.0f; // the fight target (and the nano target when there's none)
     float nanoX = -1.0f, nanoY = -1.0f;     // the nano target while there's a fight target
     float totX = -1.0f, totY = -1.0f;       // the nano target's target
+    // The game's timer bars (attack, nano, perk, item...): unlocked, drag one to move them all; where
+    // the first is (display pixels, top-left), -1 = the game's place.
+    bool timersLocked = true; // off by default: the bars stay where the game puts them
+    float timersX = -1.0f, timersY = -1.0f;
 };
 
 // A key with modifiers; vk 0 = none.
@@ -153,9 +157,22 @@ struct EffectsConfig {
     bool hideShipSmoke = true; // the glowing smoke under the alien ships, in every zone (effect 12530)
     int hide[32] = {};         // more effect ids to leave out
     int hideCount = 0;
-    bool alienMap = true;      // alien mission zones' map: rooms in green instead of black on black
+    bool alienMap = false;     // alien mission zones' map: rooms in green instead of black on black
     bool alienMapTest = false; // every dungeon map's rooms in that green (to try it outside alien zones)
     bool debug = false; // log each scenery effect id once, and each map room-tile size
+};
+
+// The round minimap ([Minimap]).
+struct MinimapConfig {
+    bool enable = false;
+    bool locked = false;     // can't be dragged
+    bool shown = true;       // shown or hidden (the game's map button / key switches)
+    float size = 200.0f;     // the map's diameter, pixels (80-600)
+    float opacity = 1.0f;    // the map and its frame (0.2-1)
+    int layer = 0;           // 0 the local map, 1 the planet map (the button on the frame switches)
+    int planetLevel = -1;    // the planet layer's map level (+ / - there step them); -1 = the most detailed
+    float zoom = 1.0f;       // 1 = the game's local map scale (0.75-1.5); the + / - buttons change it
+    float x = -1.0f, y = -1.0f; // the window's top-left (GUI units), saved when dragged; -1 = the top-right corner
 };
 
 struct Config {
@@ -164,6 +181,7 @@ struct Config {
     BarsConfig bars;
     InterfaceConfig ui;
     EffectsConfig effects;
+    MinimapConfig minimap;
 };
 
 // Current settings. Written only by LoadConfig (init thread); read by the game thread.

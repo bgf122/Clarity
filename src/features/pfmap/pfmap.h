@@ -7,4 +7,8 @@ namespace prk::pfmap {
 
 bool Install();
 
+// The texture a dungeon map room tile is drawn with: the green one in place of an alien zone's 32x32
+// floor ([Effects] AlienMap, or every tile with AlienMapTest), else `texture`. Game thread only.
+void* RoomTileTexture(void* texture);
+
 } // namespace prk::pfmap

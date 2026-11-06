@@ -7,11 +7,13 @@
 #include "core/wndproc.h"
 #include "features/bars/bars.h"
 #include "features/effects/effects.h"
+#include "features/minimap/minimap.h"
 #include "features/pfmap/pfmap.h"
 #include "features/fct/fct.h"
 #include "features/hideui/hideui.h"
 #include "features/nameplates/nameplates.h"
 #include "features/settings/settings.h"
+#include "features/timers/timers.h"
 #include "version.h"
 
 #include <windows.h>
@@ -60,6 +62,8 @@ DWORD WINAPI InitThread(void*)
     if (prk::HooksInit() && prk::game::Init()) {
         prk::fct::Install();
         prk::bars::Install(); // (before the nameplates: a click on a panel isn't a click on a plate)
+        prk::minimap::Install(); // (likewise)
+        prk::timers::Install();  // (likewise)
         prk::nameplates::Install();
         prk::hideui::Install();
         prk::effects::Install();

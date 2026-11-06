@@ -184,6 +184,13 @@ const char kDefaultIni[] =
     "NanoY=-1\n"
     "TotX=-1\n"
     "TotY=-1\n"
+    "; The game's timer bars (attack, nano, perk, item...): 0 = unlocked, drag them (a bar to drag shows\n"
+    "; while unlocked); 1 = they stay where they are\n"
+    "TimersLocked=1\n"
+    "; Where the first timer bar is (top-left, pixels; the others stack below it); set when you drag one.\n"
+    "; -1 = the game's place.\n"
+    "TimersX=-1\n"
+    "TimersY=-1\n"
     "\n"
     "[Interface]\n"
     "; Key that hides the game's interface (windows, chat, bars) and shows it again; nameplates and\n"
@@ -196,11 +203,30 @@ const char kDefaultIni[] =
     "; More scenery effects to hide (effect ids, comma-separated; see Debug)\n"
     "Hide=\n"
     "; 1 = on the map in alien mission zones, rooms in green (the game draws them black on black)\n"
-    "AlienMap=1\n"
+    "AlienMap=0\n"
     "; 1 = every dungeon and mission map's rooms in that green (to try AlienMap anywhere)\n"
     "AlienMapTest=0\n"
     "; 1 = log each scenery effect's id once (to find one to hide), and each map room-tile size\n"
-    "Debug=0\n";
+    "Debug=0\n"
+    "\n"
+    "[Minimap]\n"
+    "; 1 = a round minimap (drag it with the left mouse button unless Locked=1)\n"
+    "Enable=0\n"
+    "Locked=0\n"
+    "; 1 = shown, 0 = hidden (the game's map button and key show and hide it; the same for every character)\n"
+    "Shown=1\n"
+    "; The map's diameter in pixels (80-600) and its opacity (0.2-1)\n"
+    "Size=200\n"
+    "Opacity=1\n"
+    "; Zoom: 1 = the game's own map scale (0.75-1.5); the + / - buttons on the map change it by 0.25\n"
+    "Zoom=1\n"
+    "; 0 = the local map, 1 = the planet map (the layers button on the map switches)\n"
+    "Layer=0\n"
+    "; The planet map's level (+ / - on the planet map step them): -1 = the most detailed\n"
+    "PlanetLevel=-1\n"
+    "; Where it is (saved when you drag it); -1 = the top-right corner\n"
+    "X=-1\n"
+    "Y=-1\n";
 
 // "Ctrl+Shift+U", "Alt+F12", "Ctrl+7": modifiers and one key; vk 0 if not understood.
 Hotkey ParseHotkey(const wchar_t* text)
@@ -437,6 +463,9 @@ void LoadConfig()
         b.nanoY = ReadFloat(p, bs, L"NanoY", db.nanoY);
         b.totX = ReadFloat(p, bs, L"TotX", db.totX);
         b.totY = ReadFloat(p, bs, L"TotY", db.totY);
+        b.timersLocked = ReadFloat(p, bs, L"TimersLocked", db.timersLocked) != 0.0f;
+        b.timersX = ReadFloat(p, bs, L"TimersX", db.timersX);
+        b.timersY = ReadFloat(p, bs, L"TimersY", db.timersY);
     }
 
     {
@@ -468,6 +497,21 @@ void LoadConfig()
             e.hide[e.hideCount++] = static_cast<int>(v);
             cur = end;
         }
+    }
+
+    {
+        MinimapConfig& m = g_bufs[next].minimap;
+        const MinimapConfig dm;
+        m.enable = ReadFloat(p, L"Minimap", L"Enable", dm.enable) != 0.0f;
+        m.locked = ReadFloat(p, L"Minimap", L"Locked", dm.locked) != 0.0f;
+        m.shown = ReadFloat(p, L"Minimap", L"Shown", dm.shown) != 0.0f;
+        m.size = std::clamp(ReadFloat(p, L"Minimap", L"Size", dm.size), 80.0f, 600.0f);
+        m.opacity = std::clamp(ReadFloat(p, L"Minimap", L"Opacity", dm.opacity), 0.2f, 1.0f);
+        m.layer = std::clamp(static_cast<int>(ReadFloat(p, L"Minimap", L"Layer", static_cast<float>(dm.layer))), 0, 1);
+        m.planetLevel = static_cast<int>(ReadFloat(p, L"Minimap", L"PlanetLevel", static_cast<float>(dm.planetLevel)));
+        m.zoom = std::clamp(ReadFloat(p, L"Minimap", L"Zoom", dm.zoom), 0.75f, 1.5f);
+        m.x = ReadFloat(p, L"Minimap", L"X", dm.x);
+        m.y = ReadFloat(p, L"Minimap", L"Y", dm.y);
     }
 
     g_cur.store(next, std::memory_order_release);

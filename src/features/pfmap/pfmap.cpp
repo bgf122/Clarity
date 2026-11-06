@@ -11,7 +11,8 @@
 // can't be told from the black map. ao-vk's RVK_AlienMap draws exactly those (32x32) as solid
 // (0.10, 0.32, 0.14). Clarity does the same in the GUI, so it works with any renderer: the room loop's
 // call to the tile function is pointed at ours, which gives 32x32 tiles a small solid green texture of
-// our own (4x4, so ao-vk's own rule never takes it). The game's colour still applies on top.
+// our own (4x4, so ao-vk's own rule never takes it), a little darker than ao-vk's. The game's colour
+// still applies on top.
 // Nothing else calls through that spot: the outdoor map and the map markers are drawn elsewhere.
 #include "pfmap.h"
 
@@ -38,7 +39,7 @@ DrawTileFn g_drawTile = nullptr;
 
 constexpr int kAlienTile = 32; // ao-vk's test: the alien zones' floor textures are 32x32
 constexpr int kGreenSize = 4;
-constexpr uint32_t kGreen = 0xFF1A5224; // ao-vk's (0.10, 0.32, 0.14)
+constexpr uint32_t kGreen = 0xFF143E1B; // 3/4 of ao-vk's (0.10, 0.32, 0.14)
 
 // Game thread only.
 void* g_green = nullptr;
@@ -64,6 +65,13 @@ void* Green()
 void __fastcall Hook_DrawTile(void* view, void* /*edx*/, void* viewport, void* texture, const void* uv,
                               const void* rect, uint32_t argb)
 {
+    g_drawTile(view, viewport, RoomTileTexture(texture), uv, rect, argb);
+}
+
+} // namespace
+
+void* RoomTileTexture(void* texture)
+{
     const EffectsConfig& cfg = Cfg().effects;
     int w = 0, h = 0;
     if (texture && (cfg.alienMap || cfg.alienMapTest || cfg.debug) && game::TextureSize(texture, &w, &h)) {
@@ -72,12 +80,10 @@ void __fastcall Hook_DrawTile(void* view, void* /*edx*/, void* viewport, void* t
             Log("[pfmap] map room tiles of %dx%d%s", w, h, alien ? " (alien)" : "");
         if (cfg.alienMapTest || (cfg.alienMap && alien))
             if (void* green = Green())
-                texture = green;
+                return green;
     }
-    g_drawTile(view, viewport, texture, uv, rect, argb);
+    return texture;
 }
-
-} // namespace
 
 bool Install()
 {

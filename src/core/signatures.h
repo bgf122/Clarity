@@ -49,6 +49,17 @@
 // Client VA 0x10047167.
 #define SIG_PFMAP_ROOM_TILE "GUI.dll", "8B CB D8 65 9C D9 5D 9C E8 ?? ?? ?? ?? 8B CF FF 15 ?? ?? ?? ?? 8D 4D 90 C6 45 FC 03"
 
+// GUI.dll: MapData_c's getter (client 0x1002C8AA; the singleton is made by ControlCenterModule_c's
+// InitialiseMessage): push ecx / mov eax,[g_mapData] / test eax,eax / jnz / push 0x130 (its size) / call new.
+// The global's address is at +2. Client VA 0x1002C8B4.
+#define SIG_MAPDATA_GET "GUI.dll", "51 A1 ?? ?? ?? ?? 85 C0 75 26 68 30 01 00 00 E8"
+
+// GUI.dll: GUIModuleActivator_c's handler for the module "map_window" (the game's local map; connected in
+// its constructor 0x1002E537): __thiscall(GUIModuleBase_c*, bool open), ret 8. Opening makes the
+// PlayfieldMapView_c window (0x100EB905) unless its weak pointer (+0xDF8) holds one; closing deletes it.
+// Client VA 0x1002D3E3.
+#define SIG_LOCAL_MAP_TOGGLE "GUI.dll", "B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 80 7D 0C 00 56 74 40 8D B1 F8 0D 00 00 8B CE E8 ?? ?? ?? ?? 85 C0 75 46 68 B0 01 00 00"
+
 // GUI.dll: nametag Indicator per-frame update, int (Indicator* ecx); 0 = delete the tag.
 // Positions the sprite at N3Msg_GetIndicatorPosition.
 // Client VA 0x10024D5B.

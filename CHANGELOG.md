@@ -2,6 +2,12 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.18
+
+### Minimap
+- **Turret cones:** turrets show the red cone of what they cover, as on the game's own map, instead of a small arrow.
+- **Your selected target's arrow** now shows on every floor of a dungeon, as on the game's map.
+
 ## 0.1.17
 
 ### Minimap (new, off by default)

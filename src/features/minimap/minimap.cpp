@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -1227,14 +1228,16 @@ bool Planet(void* viewport, const void* n3, float cx, float cy, float r, float* 
 //
 // N3Msg_GetMapCharacters(range, list, count) (Gamecode 0x1001BF31) clears a std::list<MapCharacterEntry_t>
 // and fills it with what's within `range` metres, as the game's map does every 100 ms (MapData_c +0x40;
-// its EventTimer at +0xD0, started for 100000 us by GUI 0x10042416 while the map window is open). VS2010 std::list: {head node, size, allocator}; nodes {next,
-// prev, value}. The value, as the map window reads it (GUI 0x100EAA06 / 0x100EA626): +0x00 Identity,
-// +0x08 position, +0x14 rotation (x, y, z, w), +0x2C category, +0x30 the room (zone instance) it's in.
+// its EventTimer at +0xD0, started for 100000 us by GUI 0x10042416 while the map window is open).
+// VS2010 std::list: {head node, size, allocator}; nodes {next, prev, value}. The value, as the map window
+// reads it (GUI 0x100EAA06 / 0x100EA626): +0x00 Identity, +0x08 position, +0x14 rotation (x, y, z, w),
+// +0x24 / +0x28 a cone's range (metres) / half-angle (radians), +0x2C category, +0x30 the room (zone
+// instance) it's in.
 // Categories, and the GUI image (number -> name: AFCM.dll's table) the map window shows them with:
 // 0 Clan (GFX_GUI_MAPSQUARE_CLAN), 1 Omni (_OMNI), 2 neutral (_NEUTRAL), 3 monsters (_MONSTER), 4 team
 // members (_TEAMMEMBER; Gamecode 0x1006581F / 0x10065865), 5 vending machines (_SHOP), 6 reclaim booths
-// (GFX_GUI_MAPDOT_CYAN), 7 / 8 (GFX_GUI_MAPFLAG_CYAN; 8 is dynel type 0xC748), 9 characters the window
-// draws as arrows.
+// (GFX_GUI_MAPDOT_CYAN), 7 / 8 (GFX_GUI_MAPFLAG_CYAN; 8 is dynel type 0xC748), 9 cones (turrets and
+// the like: what they cover).
 //
 // Drawn exactly as the map window draws them, from the same textures made the same way:
 //  - the marker atlas (GUI 0x1004667C): 32x32, the GUI's 16-bit pixels; 13 images, each 4x4 copied to
@@ -1242,28 +1245,45 @@ bool Planet(void* viewport, const void* n3, float cx, float cy, float r, float* 
 //    units around the point (GUI 0x10046A30 -> 0x10046159), so it's soft-edged like the game's;
 //  - the arrow atlas (GUI 0x100E9BA2): 64x64, 12 images centred in 16x16 cells; an arrow is its cell
 //    drawn 16x16 around the point, turned (GUI 0x100E92EF): you GFX_GUI_MAP_ARROW (cell 0), your selected
-//    target GFX_GUI_MAP_ARROW_SELECTED (cell 1, with MapData_c +0x81).
-// Both x zoom.
+//    target GFX_GUI_MAP_ARROW_SELECTED (cell 1, with MapData_c +0x81), a character marked by a voice
+//    command GFX_GUI_MAP_BIG_ARROW (cell 2). Arrows show on every floor; the other markers only on yours.
+//    Marked: a voice command whose text starts with a "[...]" holding M or m (GUI 0x1008C17B, for the ones
+//    you send and the tells you get) sends GlobalSignals_c +0x150 (Identity, 15 s), and MapData_c
+//    (0x10042B80) keeps a std::map<Identity, __time64_t until> at +0xA0 (head +0xA4; nodes: left +0,
+//    parent +4, right +8, key +0x10, until +0x18); its pruning timer (+0x110) only runs while the game's map
+//    window is open, so the minimap reads the time too;
+//  - cones (GUI 0x100EA626 -> 0x10046400, after the markers, every floor): a fan of the point and 8 points
+//    on an arc of the cone's range, from facing - half-angle to facing + half-angle (facing as the arrows'),
+//    untextured, 0x47FF0000.
+// All x zoom.
 constexpr int kMapRange = 500;          // as the map window
 constexpr DWORD kMarkersEveryMs = 90; // each 100 ms tick (GetTickCount's steps can make it 9x ms)
 constexpr int kNodeValue = 8;
-constexpr int kEntryPos = 0x08, kEntryRot = 0x14, kEntryCategory = 0x2C, kEntryRoom = 0x30;
+constexpr int kEntryPos = 0x08, kEntryRot = 0x14, kEntryRange = 0x24, kEntryHalfAngle = 0x28, kEntryCategory = 0x2C,
+              kEntryRoom = 0x30;
 constexpr int kListAlloc = 0x10, kNodeAlloc = 0x80;
 constexpr int kCategories = 10;
 constexpr int kMarkerImages[13] = {0x102, 0x106, 0x105, 0x104, 0x108, 0xFE, 0x101, 0x109, 0x103, 0x107, 0xFF, 0xFD, 0x100};
 constexpr int kCategoryCell[kCategories] = {0, 1, 2, 3, 7, 4, 5, 6, 6, -1};
+constexpr int kCategoryCone = 9;
+constexpr uint32_t kConeArgb = 0x47FF0000;
+constexpr int kConeArcPoints = 8;
 constexpr int kArrowImages[12] = {0x10A, 0x10B, 0x10C, 0x111, 0x113, 0x112, 0x114, 0x116, 0x115, 0x10D, 0x10F, 0x10E};
-constexpr int kArrowCellYou = 0, kArrowCellSelected = 1;
+constexpr int kArrowCellYou = 0, kArrowCellSelected = 1, kArrowCellMarked = 2;
+constexpr int kMdMarked = 0xA4;                    // MapData_c: the voice-marked characters' std::map head
+constexpr int kMarkedKey = 0x10, kMarkedUntil = 0x18; // its nodes
 constexpr int kSpriteFormatGui = 2; // SpriteInfo_t Format_e: the GUI's
 
 struct Marker {
     game::Identity id;
     float x, z;
-    float heading; // radians, clockwise from north (arrows)
+    float heading; // radians, clockwise from north (arrows, cones)
+    float range, halfAngle; // cones: metres, radians
     int category;
     uint32_t room;
 };
 std::vector<Marker> g_markers; // the latest list (game thread)
+std::vector<game::Identity> g_marked; // characters a voice command marked, still in time
 bool g_markersShown = false;   // N3Msg_GetMapCharacters said yes (the map window draws them only then)
 DWORD g_markersAt = 0;
 void* g_list = nullptr;        // our std::list
@@ -1443,10 +1463,40 @@ void RefreshMarkers(const void* n3)
         const Vec3f f = Rotate(rot, Vec3f{0.0f, 0.0f, 1.0f});
         const int category = At<int>(v, kEntryCategory);
         g_markers.push_back(Marker{At<game::Identity>(v, 0), pos.x, pos.z,
-                                   (f.x != 0.0f || f.z != 0.0f) ? std::atan2(f.x, f.z) : 0.0f, category,
-                                   At<uint32_t>(v, kEntryRoom)});
+                                   (f.x != 0.0f || f.z != 0.0f) ? std::atan2(f.x, f.z) : 0.0f, At<float>(v, kEntryRange),
+                                   At<float>(v, kEntryHalfAngle), category, At<uint32_t>(v, kEntryRoom)});
     }
     ClearList();
+    // The voice-marked characters: MapData_c's std::map, walked from its root (head->parent; the head is
+    // every leaf's child), those whose time hasn't run out.
+    g_marked.clear();
+    const uint8_t* md = g_mapData ? static_cast<const uint8_t*>(*g_mapData) : nullptr;
+    const uint8_t* mhead = md ? At<const uint8_t*>(md, kMdMarked) : nullptr;
+    if (!mhead)
+        return;
+    const __time64_t now = _time64(nullptr);
+    const uint8_t* stack[64];
+    int depth = 0, steps = 0;
+    if (const uint8_t* root = At<const uint8_t*>(mhead, 4); root && root != mhead)
+        stack[depth++] = root;
+    while (depth > 0 && steps++ < 1024) {
+        const uint8_t* n = stack[--depth];
+        if (At<__time64_t>(n, kMarkedUntil) >= now)
+            g_marked.push_back(At<game::Identity>(n, kMarkedKey));
+        for (int side : {0, 8}) {
+            const uint8_t* c = At<const uint8_t*>(n, side);
+            if (c && c != mhead && depth < 64)
+                stack[depth++] = c;
+        }
+    }
+}
+
+bool Marked(const game::Identity& id)
+{
+    for (const game::Identity& m : g_marked)
+        if (m.type == id.type && m.instance == id.instance)
+            return true;
+    return false;
 }
 
 // Indoors only what's on your floor (the room it's in, by MapData_c's room ids at entry +0x00).
@@ -1460,8 +1510,28 @@ int RoomFloor(const uint8_t* md, uint32_t room)
     return INT32_MIN;
 }
 
-void Arrow(void* viewport, float cx, float cy, float size, float heading, uint32_t fill, uint32_t edge);
-
+// A cone at (x, y): `radius` GUI units out, facing `heading` (radians clockwise from north) +- halfAngle,
+// cut to the map's circle.
+void Cone(void* viewport, float x, float y, float radius, float heading, float halfAngle, float cx, float cy, float r)
+{
+    if (!(radius > 0.0f) || !(halfAngle > 0.0f) || radius > 4096.0f)
+        return;
+    Pt fan[kConeArcPoints + 1];
+    fan[0] = Pt{x, y, 0.0f, 0.0f};
+    for (int i = 0; i < kConeArcPoints; ++i) {
+        const float a = heading - halfAngle + 2.0f * halfAngle * i / (kConeArcPoints - 1);
+        fan[i + 1] = Pt{x + std::sin(a) * radius, y - std::cos(a) * radius, 0.0f, 0.0f};
+    }
+    Pt poly[kClipCap];
+    const int n = ClipToCircle(fan, kConeArcPoints + 1, cx, cy, r, poly);
+    if (n < 3 || !Begin(viewport, g_flat, nullptr))
+        return;
+    Vertex v[kClipCap];
+    for (int i = 0; i < n; ++i)
+        v[i] = V(poly[i].x, poly[i].y, kConeArgb);
+    RenderFan(*RenderInstance, kFvf, v, static_cast<unsigned long>(n), 0);
+    End(viewport, g_flat);
+}
 
 void Markers(void* viewport, const uint8_t* md, const game::Vec3& me, float cx, float cy, float r, float ppm)
 {
@@ -1472,26 +1542,29 @@ void Markers(void* viewport, const uint8_t* md, const game::Vec3& me, float cx, 
     game::Identity selected{};
     const bool showSelected = md[kMdShowSelected] != 0 && n3::SelectedTarget(&selected);
     for (const Marker& m : g_markers) {
-        if (m.category < 0 || m.category >= kCategories)
+        if (m.category < 0 || m.category >= kCategories || m.category == kCategoryCone)
             continue;
+        const float sx = cx + (m.x - me.x) * ppm, sy = cy - (m.z - me.z) * ppm;
+        if ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) > (r - 3.0f) * (r - 3.0f))
+            continue;
+        // An arrow (as the game: on every floor) for a voice-marked character or your selected target.
+        const bool marked = Marked(m.id);
+        if ((marked || (showSelected && m.id.type == selected.type && m.id.instance == selected.instance)) &&
+            g_arrowAtlas.tex) {
+            DrawCell(viewport, g_arrowAtlas, marked ? kArrowCellMarked : kArrowCellSelected, sx, sy, 16.0f * g_zoom,
+                     m.heading);
+            continue;
+        }
         if (indoors) {
             const int f = RoomFloor(md, m.room);
             if (f != INT32_MIN && f != floor)
                 continue;
         }
-        const float sx = cx + (m.x - me.x) * ppm, sy = cy - (m.z - me.z) * ppm;
-        if ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) > (r - 3.0f) * (r - 3.0f))
-            continue;
-        if (showSelected && m.id.type == selected.type && m.id.instance == selected.instance && g_arrowAtlas.tex) {
-            DrawCell(viewport, g_arrowAtlas, kArrowCellSelected, sx, sy, 16.0f * g_zoom, m.heading);
-            continue;
-        }
-        const int cell = kCategoryCell[m.category];
-        if (cell >= 0)
-            DrawCell(viewport, g_markerAtlas, cell, sx, sy, 8.0f * g_zoom, 0.0f);
-        else
-            Arrow(viewport, sx, sy, 3.5f * g_zoom, m.heading, 0xFFE6E8EA, 0xFF000000);
+        DrawCell(viewport, g_markerAtlas, kCategoryCell[m.category], sx, sy, 8.0f * g_zoom, 0.0f);
     }
+    for (const Marker& m : g_markers) // the cones, over the markers (every floor, as the game's)
+        if (m.category == kCategoryCone)
+            Cone(viewport, cx + (m.x - me.x) * ppm, cy - (m.z - me.z) * ppm, m.range * ppm, m.heading, m.halfAngle, cx, cy, r);
 }
 
 // --- the mission waypoint ---------------------------------------------------------------------

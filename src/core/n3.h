@@ -22,6 +22,17 @@ constexpr int kStatOwnerInstance = 433;
 constexpr int kStatNpcFamily = 455;
 constexpr int kStatPetType = 512;
 constexpr int kStatPetState = 671;
+// What the game's Stats window (StatView_c, Ctrl+9) shows: the attack rating (GUI 0x1007FA7A) and the
+// armour classes (0x1007FAD8, in the window's order).
+constexpr int kStatAttackRating = 22;
+constexpr int kStatMeleeAC = 91;      // "Melee/ma AC"
+constexpr int kStatProjectileAC = 90; // "Imp/Proj AC"
+constexpr int kStatEnergyAC = 92;
+constexpr int kStatPoisonAC = 96;     // "Disease AC"
+constexpr int kStatChemicalAC = 93;
+constexpr int kStatRadiationAC = 94;
+constexpr int kStatColdAC = 95;
+constexpr int kStatFireAC = 97;
 
 bool Init();
 

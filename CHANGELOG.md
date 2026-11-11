@@ -2,6 +2,24 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.19
+
+### Frames
+- **Your level** shows in teal before your name.
+- **Attack rating and Melee/ma AC** under your nano bar, in the colours of the game's Stats window.
+  - **All your armour classes:** rest the mouse on the Melee/ma AC line and a small box lists all eight.
+- **Your health and nano bars** have the same shading as the bars in the game's Stats window.
+- **A cleaner look:** the silver outer border is gone from every frame, there is less empty space inside them, and the fine stripes in the bars are gone.
+- **Targets with no health** (objects, corpses) get a slim frame under their name instead of an empty bar.
+
+### Floating Combat Text
+- **Fixed:** nano that other players gained showed up as floating text, as if you had gained it.
+
+### Minimap
+- **New frame:** the silver rim is gone. The ring is thicker, and the compass letters, buttons and markers sit on it.
+- **The game's compass** is hidden while the minimap is on, and comes back when you turn the minimap off.
+- **Dungeons on your planet map:** some planet maps draw dungeons too (Saavick's map has Temple of Three Winds, Smugglers Den, Camelot Castle and more). In those, the minimap switches to the planet layer by itself. The layers button switches back for that visit.
+
 ## 0.1.18
 
 ### Minimap

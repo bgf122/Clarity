@@ -59,6 +59,7 @@ using WindowShowFn = void(__thiscall*)(void* self, bool show);
 using WindowIsVisibleFn = bool(__thiscall*)(const void* self);
 using WindowAddChildFn = void(__thiscall*)(void* self, void* view, bool);
 using WindowMoveToFn = void(__thiscall*)(void* self, float x, float y);
+using WindowFrontFn = void(__thiscall*)(void* self);
 using WindowResizeToFn = void(__thiscall*)(void* self, float w, float h);
 using ScreenSizeFn = GuiPoint*(__cdecl*)(GuiPoint* ret);
 using MouseWindowFn = void*(__thiscall*)(void* self);
@@ -90,6 +91,7 @@ WindowShowFn WindowShow;
 WindowIsVisibleFn WindowIsVisible;
 WindowAddChildFn WindowAddChild;
 WindowMoveToFn WindowMoveTo;
+WindowFrontFn WindowMoveToFront; // over the other windows (optional)
 WindowResizeToFn WindowResizeTo;
 ScreenSizeFn ScreenSize;
 MouseWindowFn MouseWindow;    // WindowController_c::GetMouseWindow
@@ -120,6 +122,11 @@ constexpr size_t kSurfaceAlloc = 0x68;
 constexpr size_t kSpriteAlloc = 0x44;
 constexpr int kWindowStyle = 3;        // as CharBarWindow_c
 constexpr unsigned kWindowFlags = 0xE3C;
+// Window flags 0x200 / 0x100 put the window's root view behind / in front of the other windows (the
+// constructor makes them its view flags 8 / 0x10, which View::_LinkChild keeps at the back / front of
+// the list): the bars stay behind (0x200, as the game's), the hover panel is over everything.
+constexpr unsigned kWindowBack = 0x200, kWindowFront = 0x100;
+constexpr unsigned kTopWindowFlags = (kWindowFlags & ~kWindowBack) | kWindowFront;
 constexpr unsigned kViewResize = 0xF;  // as CharacterBar_c
 constexpr unsigned kViewFlags = 2;
 // SpriteInfo_t's Format_e: 1 the display's, 2 the GUI's (D3DX A1R5G5B5: one bit of alpha, no smooth
@@ -189,6 +196,8 @@ bool ResolveAll()
     Resolve(GuiResources, "Interfaces.dll", "?GetInstance@GuiResourceManager_t@@SAPAV1@XZ");
     Resolve(GuiTexture, "Interfaces.dll", "?GetGuiTexture@GuiResourceManager_t@@QAEPAVSpriteInfo_t@@HW4Format_e@@@Z");
     Resolve(ReleaseTexture, "Interfaces.dll", "?ReleaseTexture@GuiResourceManager_t@@QAEXPAVSpriteInfo_t@@@Z");
+    // The hover panel over the other windows (optional: it may be under one without it).
+    Resolve(WindowMoveToFront, gui, "?MoveToFront@Window@@QAEXXZ");
     // Click a panel to select whom it shows (optional: no selecting without it).
     Resolve(SetTarget, gui, "?SetTarget@TargetingModule_t@@CAXABVIdentity_t@@_N@Z");
     // In GUI.dll or Utils.dll depending on the build.
@@ -493,7 +502,7 @@ uint32_t Darker(uint32_t rgb, float f)
     return Canvas::Mix(0x000000, rgb, f);
 }
 
-enum FontId { kFontValue, kFontName, kFontCount };
+enum FontId { kFontValue, kFontName, kFontLabel, kFontCount };
 raster::Font g_fonts[kFontCount];
 bool g_fontsOk = false;
 
@@ -516,7 +525,8 @@ bool EnsureFonts(float scale)
     g_text.clear();
     g_frames.clear();
     g_scale = scale;
-    g_fontsOk = g_fonts[kFontValue].Create(L"Bahnschrift", S(15), 600) && g_fonts[kFontName].Create(L"Bahnschrift", S(17), 600);
+    g_fontsOk = g_fonts[kFontValue].Create(L"Bahnschrift", S(15), 600) && g_fonts[kFontName].Create(L"Bahnschrift", S(17), 600) &&
+                g_fonts[kFontLabel].Create(L"Bahnschrift", S(12), 600);
     if (!g_fontsOk)
         Log("[bars] font creation failed - panels off");
     return g_fontsOk;
@@ -633,20 +643,19 @@ int Tenths(int value, int max)
     return std::clamp(static_cast<int>(1000.0 * std::min(value, max) / max), 0, 1000);
 }
 
-// The game's own bar colours: the fill image of its health / nano bar (CharacterBar_c makes a
-// PowerbarView_c of background, fill and two end caps: health 0x0E, 0x0D, 0x0F, 0x10; nano 0x12, 0x11,
-// 0x13, 0x14), averaged across its length - the skin's colours across the bar, with their shading.
-// The game's bars stand upright (filled bottom to top, 35x200 in the default skin): their colour
-// across is the image's columns, left to right, which become ours top to bottom. Along the length
-// the image has its segment marks, which an average over the length leaves out.
+// The game's own bar colours and shading: the fill images of the Stats window's bars (StatView_c,
+// GUI 0x1007FF6E, makes each a PowerbarView_c(rect, background 0xDB, fill, 0, 0, horizontal):
+// health 0xDD, nano 0xDA), averaged along the length - the skin's colours
+// across the bar, top to bottom: dark, bright in the middle, dark again. An upright image would
+// have its colours across in its columns (ImageProfile takes either).
 struct Colours {
-    uint32_t fill = 0;
+    uint32_t fill = 0;              // one colour (the bar's bright end, the fallback)
+    std::vector<uint32_t> shading;  // top to bottom, empty = Gloss(fill)
 };
 Colours g_healthColours, g_nanoColours;
 bool g_coloursLoaded = false;
-constexpr int kHealthFillImage = 0x0D;
-constexpr float kHealthDarker = 0.72f;
-constexpr int kNanoFillImage = 0x11;
+constexpr int kHealthFillImage = 0xDD;
+constexpr int kNanoFillImage = 0xDA;
 
 bool DecodePixel(const uint8_t* p, int format, uint32_t* rgb, float* alpha)
 {
@@ -714,13 +723,13 @@ std::vector<uint32_t> ImageProfile(int id)
     return rows;
 }
 
-// One colour for the bar: the image's average across, or `fallback` if it couldn't be read.
+// The bar's shading: the image's colours across, or Gloss(fallback) if it couldn't be read.
 Colours MakeColours(const std::vector<uint32_t>& across, uint32_t fallback)
 {
-    Colours c{fallback};
+    Colours c{fallback, across};
     if (!across.empty())
         c.fill = Canvas::ProfileAt(across, 0.0f, 1.0f);
-    Log("[bars] bar colour #%06X", c.fill);
+    Log("[bars] bar colour #%06X (%d shades)", c.fill, static_cast<int>(across.size()));
     return c;
 }
 
@@ -729,9 +738,8 @@ void LoadColours()
     if (g_coloursLoaded)
         return;
     g_coloursLoaded = true;
-    g_healthColours = MakeColours(ImageProfile(kHealthFillImage), 0xC83232);
-    g_healthColours.fill = Darker(g_healthColours.fill, kHealthDarker); // a deeper red than the skin's
-    g_nanoColours = MakeColours(ImageProfile(kNanoFillImage), 0x3C6ED2);
+    g_healthColours = MakeColours(ImageProfile(kHealthFillImage), 0xE02900);
+    g_nanoColours = MakeColours(ImageProfile(kNanoFillImage), 0x008CEF);
 }
 
 // --- panels ---------------------------------------------------------------------------------
@@ -749,6 +757,7 @@ struct Panel {
     float BarsConfig::*cfgX;
     float BarsConfig::*cfgY;
     int texW, texH;            // the sprite (room for the largest Scale)
+    unsigned windowFlags = kWindowFlags;
 
     void* window = nullptr;
     void* windowVtable = nullptr; // to notice the GUI deleting it and reusing the memory
@@ -777,7 +786,10 @@ Panel g_self{"self", L"SelfX", L"SelfY", &BarsConfig::selfX, &BarsConfig::selfY,
 Panel g_fight{"fight target", L"TargetX", L"TargetY", &BarsConfig::targetX, &BarsConfig::targetY, 1024, 256};
 Panel g_nano{"nano target", L"NanoX", L"NanoY", &BarsConfig::nanoX, &BarsConfig::nanoY, 1024, 256};
 Panel g_tot{"nano target's target", L"TotX", L"TotY", &BarsConfig::totX, &BarsConfig::totY, 1024, 256};
-Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot};
+// Your armour classes, shown while the mouse is over your panel (no place of its own: it
+// follows your panel, and isn't dragged or clicked), in front of the other windows.
+Panel g_selfStats{"armour class", nullptr, nullptr, nullptr, nullptr, 512, 512, kTopWindowFlags};
+Panel* const g_panels[] = {&g_self, &g_fight, &g_nano, &g_tot, &g_selfStats};
 bool g_nanoInFightPlace = false; // no fight target: the nano target is shown where the fight target's panel is
 
 void* g_wc = nullptr;          // the window controller the panels belong to
@@ -816,6 +828,8 @@ void TargetSize(bool small, int* w, int* h);
 // fight target and the nano target's target under that.
 void UpdateHome(Panel& p, const GuiPoint& screen, float k)
 {
+    if (!p.cfgX)
+        return;
     const BarsConfig& cfg = Cfg().bars;
     const float cx = cfg.*p.cfgX, cy = cfg.*p.cfgY;
     if (cx == p.cfgSeenX && cy == p.cfgSeenY)
@@ -898,7 +912,7 @@ bool Create(Panel& p, int w, int h, float k)
     p.gh = h * k;
     const TempString empty("");
     const GuiRect frame{0.0f, 0.0f, p.gw - 1.0f, p.gh - 1.0f};
-    WindowCtor(p.window, &frame, empty.buf, empty.buf, kWindowStyle, kWindowFlags);
+    WindowCtor(p.window, &frame, empty.buf, empty.buf, kWindowStyle, p.windowFlags);
     p.windowVtable = *static_cast<void**>(p.window);
     ViewCtor(p.view, &frame, empty.buf, kViewResize, kViewFlags);
     ViewSetResizeMask(p.view, kViewResize);
@@ -1113,20 +1127,16 @@ void AppendText(std::string& state, const std::wstring& s)
 
 // --- the frame ------------------------------------------------------------------------------
 
-// Every panel: a silver rim with cut corners, a dark gap, a gunmetal inner ring with steps along its
-// top and bottom, and a dark inner panel; teal lines glow along the lower inner corners and a teal
-// light sits on the top right. The bars are set into it in silver bezels, and the name is under
+// Every panel: a dark outline with cut corners, a gunmetal ring with steps along its top and bottom,
+// and a dark inner panel; teal lines glow along the lower inner corners and a teal light sits on the
+// top right. The bars are set into it in silver bezels, and the name is under
 // them in spaced capitals.
 constexpr uint32_t kTealRgb = 0x2FD3B9;
 constexpr uint32_t kLabelRgb = 0xD2D6DA;
 
-int FrameRim()
+int FrameOutline()
 {
-    return std::max(3, S(6));
-}
-int FrameGap()
-{
-    return std::max(1, S(2));
+    return 1;
 }
 int FrameRing()
 {
@@ -1139,11 +1149,11 @@ int Bezel() // round each bar
 // The edge of the inner panel, from the panel's edge.
 int FrameInner()
 {
-    return FrameRim() + FrameGap() + FrameRing();
+    return FrameOutline() + FrameRing();
 }
 int FrameInset() // panel edge -> bars
 {
-    return FrameInner() + S(12) + Bezel();
+    return FrameInner() + S(10) + Bezel();
 }
 float FrameCut()
 {
@@ -1164,11 +1174,17 @@ int NameLineH()
     return CapH() + S(12);
 }
 
+// The lines under your nano bar: attack rating, then melee AC.
+constexpr int kStatsGap = 10;  // the nano bar's bottom -> the first line
+constexpr int kStatsRowH = 16;
+constexpr int kStatsRows = 2;
+
 // Your frame, and the panel's height with the name over it.
 void SelfSize(int* w, int* h)
 {
     *w = S(kBarWidth) + 2 * FrameInset();
-    *h = NameLineH() + 2 * FrameInset() + static_cast<int>(HealthBarH()) + S(kWellGap) + static_cast<int>(NanoBarH());
+    *h = NameLineH() + 2 * FrameInset() + static_cast<int>(HealthBarH()) + S(kWellGap) + static_cast<int>(NanoBarH()) + S(kStatsGap) +
+         kStatsRows * S(kStatsRowH);
 }
 
 // The game's target health bar (TargetHealthBar_c) tiles a 16-pixel section image along its length,
@@ -1203,7 +1219,7 @@ void TargetSize(bool small, int* w, int* h)
 void NameSize(int* w, int* h)
 {
     *w = S(kSmallBarWidth) + 2 * FrameInset();
-    *h = 2 * (FrameInner() + S(11)) + CapH();
+    *h = 2 * (FrameInner() + S(9)) + CapH();
 }
 
 // A teal line with a soft glow along the points.
@@ -1221,24 +1237,13 @@ void TealPath(Canvas& c, const std::vector<std::pair<float, float>>& pts, float 
 void PaintFrameInto(Canvas& c)
 {
     const float W = static_cast<float>(c.w), H = static_cast<float>(c.h), cut = FrameCut();
-    const float rim = static_cast<float>(FrameRim()), gap = static_cast<float>(FrameGap()), ring = static_cast<float>(FrameRing());
-    const float r0 = rim + gap, r1 = r0 + ring; // the inner ring, outside and inside
+    const float ring = static_cast<float>(FrameRing());
+    const float r0 = static_cast<float>(FrameOutline()), r1 = r0 + ring; // the ring, outside and inside
     auto flat = [](uint32_t rgb) { return [rgb](float, int) { return rgb; }; };
     auto above = [&](float y) { return [y](float, float py) { return py < y; }; };
-    auto below = [&](float y) { return [y](float, float py) { return py > y; }; };
 
-    // The silver rim: brushed, light at the top and a little darker below, a bright line along its
-    // outer edge and a dark one along its inner edge, and a dark line round the outside.
-    c.Chamfer(0.0f, 0.0f, W, H, cut, 1.0f, flat(0x0A0B0D));
-    c.Chamfer(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, [](float t, int y) {
-        const uint32_t rgb = Canvas::Mix(0xCDD1D5, 0x8C9196, t);
-        const float grain = static_cast<float>((static_cast<uint32_t>(y) * 2654435761u >> 16) & 0xFF) / 255.0f - 0.5f;
-        return Canvas::Mix(rgb, grain > 0.0f ? 0xFFFFFF : 0x000000, std::fabs(grain) * 0.12f);
-    });
-    c.ChamferStroke(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, 0xFFFFFF, 0.55f, above(H * 0.6f));
-    c.ChamferStroke(1.0f, 1.0f, W - 1.0f, H - 1.0f, InnerCut(cut, 1.0f), 1.0f, 0x2A2D30, 0.6f, below(H * 0.6f));
-    // The gap, near black, then the gunmetal ring with a light line along its top.
-    c.Chamfer(rim, rim, W - rim, H - rim, InnerCut(cut, rim), 1.0f, flat(0x0B0C0E));
+    // The outline, near black, then the gunmetal ring with a light line along its top.
+    c.Chamfer(0.0f, 0.0f, W, H, cut, 1.0f, flat(0x0B0C0E));
     c.Chamfer(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, [](float t, int) { return Canvas::Mix(0x41454A, 0x2B2E32, t); });
     c.ChamferStroke(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, 0x6A6F74, 0.8f, above(H * 0.5f));
     // The inner panel, and steps in the ring: thicker along the middle of the top and of the bottom,
@@ -1249,9 +1254,6 @@ void PaintFrameInto(Canvas& c)
     c.Polygon({{W * 0.27f, r1 - 0.5f}, {W * 0.73f, r1 - 0.5f}, {W * 0.73f - step, r1 + step}, {W * 0.27f + step, r1 + step}}, ringRgb, 1.0f);
     c.Polygon({{W * 0.34f + step, H - r1 - step}, {W * 0.66f - step, H - r1 - step}, {W * 0.66f, H - r1 + 0.5f}, {W * 0.34f, H - r1 + 0.5f}},
               ringRgb, 1.0f);
-    // Notches across the rim where the bottom steps are.
-    for (const float nx : {W * 0.34f, W * 0.66f})
-        c.Line(nx, H - rim, nx, H - 1.0f, 1.0f, 0x2A2D30, 0.8f);
 
     // Teal along the inner panel's lower corners: up the side, round the corner, along the bottom
     // to the step and up it; less of it on the right.
@@ -1302,11 +1304,11 @@ std::vector<uint32_t> Gloss(uint32_t rgb)
     return rows;
 }
 
-
-// A bar set into the panel at (x, y): a silver bezel, the track, the filled part glossy with fine
-// vertical lines and a bright edge, the sections (`section` pixels each, 0 = none), and the amount
-// (your bars).
-void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, uint32_t rgb, const std::wstring& amount, float section = 0.0f)
+// A bar set into the panel at (x, y): a silver bezel, the track, the filled part shaded top to bottom
+// (`shading`, the game's; else glossy in rgb) with a bright edge, the sections (`section` pixels each,
+// 0 = none), and the amount (your bars).
+void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, uint32_t rgb, const std::wstring& amount, float section = 0.0f,
+             const std::vector<uint32_t>* shading = nullptr)
 {
     const float b = static_cast<float>(Bezel());
     const float fx = static_cast<float>(x), fy = static_cast<float>(y), fw = static_cast<float>(w), fh = static_cast<float>(h);
@@ -1319,11 +1321,8 @@ void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, uint32_t rgb, co
     bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, 0x0B0D10, 0x17191D, 1.0f);
     if (tenths >= 0) {
         const float fill = fw * tenths / 1000.0f;
-        const std::vector<uint32_t> gloss = Gloss(rgb);
+        const std::vector<uint32_t> gloss = shading && !shading->empty() ? *shading : Gloss(rgb);
         bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, rgb, rgb, 1.0f, 0.0f, fill, &gloss);
-        for (int lx = 2; lx < fill - 1.0f; lx += 3) // fine vertical lines
-            for (int ly = 1; ly < h - 1; ++ly)
-                bar.Blend(lx, ly, 0x000000, 0.07f);
         const uint32_t edge = Canvas::Mix(rgb, 0xFFFFFF, 0.45f); // its bright end
         if (fill >= 2.0f)
             for (int ly = 0; ly < h; ++ly)
@@ -1369,6 +1368,48 @@ void NameOverFrame(const std::wstring& name, int fw, int* w, int* frameX)
     *frameX = (*w - fw) / 2;
 }
 
+// --- your stats -----------------------------------------------------------------------------
+
+// The Stats window's colours: labels white ("<FONT color=#ffffff>%s:</font>", GUI 0x101B7388), numbers
+// light blue ("<FONT color=#bbbbff>%d</font>", 0x1007FA7A / 0x1007FAD8).
+constexpr uint32_t kStatLabelRgb = 0xFFFFFF;
+constexpr uint32_t kStatValueRgb = 0xBBBBFF;
+
+// A stat as the game's Stats window has it, with thousands separated ("12,345"; "-" if unknown).
+std::wstring StatText(int v)
+{
+    if (v == n3::kNoValue)
+        return L"-";
+    std::wstring g = std::to_wstring(v < 0 ? -static_cast<long long>(v) : static_cast<long long>(v));
+    for (int i = static_cast<int>(g.size()) - 3; i > 0; i -= 3)
+        g.insert(static_cast<size_t>(i), L",");
+    return v < 0 ? L"-" + g : g;
+}
+
+// A stat's line: its label from `left`, its number up to `right`, centred on y.
+void DrawStatLine(Canvas& c, const wchar_t* label, const std::wstring& value, float left, float right, float y)
+{
+    DrawText(c, kFontLabel, label, left, CentredTop(kFontLabel, y), kStatLabelRgb);
+    DrawText(c, kFontValue, value, std::round(right - TextWidth(kFontValue, value)), CentredTop(kFontValue, y), kStatValueRgb);
+}
+
+// The armour classes the hover panel lists: all of them (melee too, though your panel shows it: the
+// list reads better whole), in the Stats window's order, with its labels.
+constexpr wchar_t kAttackLabel[] = L"Attack rating";
+constexpr wchar_t kMeleeLabel[] = L"Melee/ma AC";
+struct AcStat {
+    int stat;
+    const wchar_t* label;
+};
+constexpr AcStat kPopupAcs[] = {
+    {n3::kStatMeleeAC, kMeleeLabel},         {n3::kStatProjectileAC, L"Imp/Proj AC"}, {n3::kStatEnergyAC, L"Energy AC"},
+    {n3::kStatPoisonAC, L"Disease AC"},      {n3::kStatChemicalAC, L"Chemical AC"},   {n3::kStatRadiationAC, L"Radiation AC"},
+    {n3::kStatColdAC, L"Cold AC"},           {n3::kStatFireAC, L"Fire AC"},
+};
+constexpr int kAcCount = static_cast<int>(sizeof(kPopupAcs) / sizeof(kPopupAcs[0]));
+constexpr int kAcRow = 1; // your panel's melee AC line: the mouse on it shows the armour classes
+RECT g_acRow{};           // that line in your panel (its pixels)
+
 void UpdateSelf(HWND hwnd)
 {
     const game::Identity self{50000, game::ClientInstance()};
@@ -1379,33 +1420,129 @@ void UpdateSelf(HWND hwnd)
     const std::wstring hpAmount = Amount(health, life);
     const std::wstring npAmount = Amount(nano, maxNano);
     const std::wstring name = PlainName(self);
+    const std::wstring level = StatText(n3::GetSkill(self, n3::kStatLevel));
+    const std::wstring attack = StatText(n3::GetSkill(self, n3::kStatAttackRating));
+    const std::wstring melee = StatText(n3::GetSkill(self, n3::kStatMeleeAC));
 
-    int fw, h, w, frameX;
+    // The level left of the name (as the Modern nameplates have it), the two centred together.
+    const std::wstring nameCaps = Upper(name);
+    const float nameW = SpacedWidth(kFontName, nameCaps, NameSpacing());
+    const float levelW = SpacedWidth(kFontName, level, NameSpacing()), levelGap = static_cast<float>(S(10));
+    const float nameLineW = levelW + levelGap + nameW;
+
+    int fw, h;
     SelfSize(&fw, &h);
-    NameOverFrame(name, fw, &w, &frameX);
+    const int w = std::max(fw, static_cast<int>(std::ceil(nameLineW)) + 2 * kTextPad), frameX = (w - fw) / 2;
     const int barW = S(kBarWidth), inset = FrameInset(), top = NameLineH();
     const int healthH = static_cast<int>(HealthBarH()), nanoH = static_cast<int>(NanoBarH());
     const int nanoTop = top + inset + healthH + S(kWellGap);
+    const int statsTop = nanoTop + nanoH + S(kStatsGap);
     LoadColours();
 
     char part[96];
     sprintf_s(part, "%d %.2f|", w, g_scale);
     std::string state = part;
     AppendText(state, name);
+    AppendText(state, level);
     sprintf_s(part, "%d %d|", hp, np);
     std::string bars = part;
     AppendText(bars, hpAmount);
     AppendText(bars, npAmount);
-    const RECT barsArea{frameX + inset, top + inset, frameX + inset + barW, nanoTop + nanoH};
+    AppendText(bars, attack);
+    AppendText(bars, melee);
+    // The bars and the stats line under them (a little wider, for the letters' outline).
+    const int pad = Bezel();
+    const RECT barsArea{frameX + inset - pad, top + inset, frameX + inset + barW + pad, statsTop + kStatsRows * S(kStatsRowH)};
     g_self.id = self;
-    // Your name over the frame; in it your health over your nano, in the game's colours, with their
-    // amounts.
+    g_acRow = {frameX + inset, statsTop + kAcRow * S(kStatsRowH), frameX + inset + barW, statsTop + (kAcRow + 1) * S(kStatsRowH)};
+    // Your level and name over the frame; in it your health over your nano, in the game's colours,
+    // with their amounts, and under them your attack rating and melee AC.
     Present(g_self, w, h, frameX, g_self.homeX, g_self.homeY, state, bars, barsArea, hwnd, [&](Canvas& c) {
-        DrawName(c, name, kLabelRgb, top * 0.5f);
+        const float nameX = std::round((c.w - nameLineW) * 0.5f), nameTop = CentredTop(kFontName, top * 0.5f);
+        DrawSpaced(c, kFontName, level, NameSpacing(), nameX, nameTop, kTealRgb);
+        DrawSpaced(c, kFontName, nameCaps, NameSpacing(), nameX + levelW + levelGap, nameTop, kLabelRgb);
         PaintFrame(c, frameX, top, fw, h - top);
-        DrawBar(c, frameX + inset, top + inset, barW, healthH, hp, g_healthColours.fill, hpAmount);
-        DrawBar(c, frameX + inset, nanoTop, barW, nanoH, np, g_nanoColours.fill, npAmount);
+        DrawBar(c, frameX + inset, top + inset, barW, healthH, hp, g_healthColours.fill, hpAmount, 0.0f, &g_healthColours.shading);
+        DrawBar(c, frameX + inset, nanoTop, barW, nanoH, np, g_nanoColours.fill, npAmount, 0.0f, &g_nanoColours.shading);
+        const float left = static_cast<float>(frameX + inset), right = left + barW;
+        // A line each, the label at the left and the number at the right (as the hover panel).
+        const std::pair<const wchar_t*, const std::wstring*> lines[kStatsRows] = {{kAttackLabel, &attack}, {kMeleeLabel, &melee}};
+        for (int i = 0; i < kStatsRows; ++i)
+            DrawStatLine(c, lines[i].first, *lines[i].second, left, right, statsTop + (i + 0.5f) * S(kStatsRowH));
     });
+}
+
+// The mouse over a shown panel (GUI units), with no other GUI window over it there.
+bool MouseOver(const Panel& p, float gx, float gy, void* under)
+{
+    return p.window && WindowIsVisible(p.window) && (!under || under == p.window) && gx >= p.x && gy >= p.y && gx < p.x + p.gw &&
+           gy < p.y + p.gh;
+}
+
+// How long the mouse rests on your AC line before the hover panel shows (so passing over doesn't flash it).
+constexpr DWORD kStatsDelayMs = 400;
+DWORD g_hoverSince = 0; // when the mouse came onto your AC line; 0 = it isn't there
+
+// While the mouse is on the melee AC line of your panel, all your armour classes in a small frame
+// under your panel's, or over it if there's no room below; in front of the other windows.
+void UpdateSelfStats(HWND hwnd, DWORD now)
+{
+    bool hovered = false;
+    POINT pt{};
+    RECT rc{};
+    if (!g_drag && g_self.window && GetForegroundWindow() == GetAncestor(hwnd, GA_ROOT) && GetCursorPos(&pt) && ScreenToClient(hwnd, &pt) &&
+        GetClientRect(hwnd, &rc) && PtInRect(&rc, pt)) {
+        const float gx = pt.x * g_guiPerPx, gy = pt.y * g_guiPerPx;
+        void* under = MouseWindow(g_wc);
+        const float k = g_guiPerPx;
+        hovered = MouseOver(g_self, gx, gy, under) && gx >= g_self.x + g_acRow.left * k && gx < g_self.x + g_acRow.right * k &&
+                  gy >= g_self.y + g_acRow.top * k && gy < g_self.y + g_acRow.bottom * k;
+    }
+    const bool wasShown = g_selfStats.window && WindowIsVisible(g_selfStats.window);
+    if (!hovered)
+        g_hoverSince = 0;
+    else if (!g_hoverSince)
+        g_hoverSince = now ? now : 1; // never 0 (and never after now)
+    if (!hovered || (!wasShown && now - g_hoverSince < kStatsDelayMs)) {
+        Show(g_selfStats, false);
+        return;
+    }
+
+    const game::Identity self{50000, game::ClientInstance()};
+    std::wstring values[kAcCount];
+    char part[48];
+    sprintf_s(part, "%.2f|", g_scale);
+    std::string state = part;
+    float labelW = 0.0f, valueW = 0.0f;
+    for (int i = 0; i < kAcCount; ++i) {
+        values[i] = StatText(n3::GetSkill(self, kPopupAcs[i].stat));
+        AppendText(state, values[i]);
+        labelW = std::max(labelW, TextWidth(kFontLabel, kPopupAcs[i].label));
+        valueW = std::max(valueW, TextWidth(kFontValue, values[i]));
+    }
+    const int pad = FrameInner() + S(10), rowH = S(20);
+    const int w = std::max(S(150), static_cast<int>(std::ceil(labelW + S(24) + valueW))) + 2 * pad;
+    const int h = kAcCount * rowH + 2 * (FrameInner() + S(6));
+    sprintf_s(part, "%d|", w);
+    state += part;
+
+    // Lined up with your frame's left edge; a little gap from it.
+    const float k = g_guiPerPx, gap = S(4) * k;
+    GuiPoint screen{};
+    ScreenSize(&screen);
+    const float x = g_self.x + g_self.frameX;
+    float y = g_self.y + g_self.gh + gap;
+    if (y + h * k > screen.y)
+        y = g_self.y - h * k - gap;
+    Present(g_selfStats, w, h, 0, x, y, state, {}, RECT{}, hwnd, [&](Canvas& c) {
+        PaintFrame(c, 0, 0, w, h);
+        const float top = static_cast<float>(FrameInner() + S(6));
+        for (int i = 0; i < kAcCount; ++i)
+            DrawStatLine(c, kPopupAcs[i].label, values[i], static_cast<float>(pad), static_cast<float>(w - pad), top + (i + 0.5f) * rowH);
+    });
+    // Each time it opens: in front of whatever window is there (Window::MoveToFront, as a click on a window).
+    if (!wasShown && g_selfStats.window && WindowIsVisible(g_selfStats.window) && WindowMoveToFront)
+        WindowMoveToFront(g_selfStats.window);
 }
 
 struct Row {
@@ -1446,18 +1583,21 @@ float FadeAlpha(DWORD now)
 // The fight target's ring: the inner ring of the w x h frame at (x, y), in orange.
 void PaintOutline(Canvas& c, int x, int y, int w, int h)
 {
-    const float r0 = static_cast<float>(FrameRim() + FrameGap());
+    const float r0 = static_cast<float>(FrameOutline());
     c.ChamferStroke(x + r0, y + r0, x + w - r0, y + h - r0, InnerCut(FrameCut(), r0), static_cast<float>(FrameRing()), kOutlineRgb,
                     1.0f, [](float, float) { return true; });
 }
 
 // A target's panel: its name over the frame, and in the frame its health bar in the consider colour,
 // in sections as the game's target bar; no numbers. The nano target's is smaller while there's a fight
-// target.
+// target. A target with no health (an object, a corpse): a slim empty frame, as low as its cut corners
+// allow.
 void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, float y, HWND hwnd, DWORD now)
 {
     int barW, barH, fw, h, w, frameX;
     TargetSize(small, &barW, &barH, &fw, &h);
+    if (r.hp < 0)
+        h = NameLineH() + static_cast<int>(std::ceil(2.0f * FrameCut())) + 2;
     NameOverFrame(r.name, fw, &w, &frameX);
     const int inset = FrameInset(), top = NameLineH();
     const float sections = GameSections(r.life);
@@ -1473,7 +1613,8 @@ void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, fl
     Present(p, w, h, frameX, x, y, state, bars, barsArea, hwnd, [&](Canvas& c) {
         DrawName(c, r.name, kLabelRgb, top * 0.5f);
         PaintFrame(c, frameX, top, fw, h - top);
-        DrawBar(c, frameX + inset, top + inset, barW, barH, r.hp, r.rgb, {}, barW / sections);
+        if (r.hp >= 0)
+            DrawBar(c, frameX + inset, top + inset, barW, barH, r.hp, r.rgb, {}, barW / sections);
     });
     if (!outline)
         return;
@@ -1609,6 +1750,8 @@ void Update(HWND hwnd)
         UpdateHome(*p, screen, k);
     UpdateSelf(hwnd);
     if (!g_disabled)
+        UpdateSelfStats(hwnd, now);
+    if (!g_disabled)
         UpdateTargets(hwnd, now);
 }
 
@@ -1663,6 +1806,8 @@ Panel* PanelAt(HWND hwnd, LPARAM lp)
     const float gx = static_cast<short>(LOWORD(lp)) * k, gy = static_cast<short>(HIWORD(lp)) * k;
     void* under = MouseWindow(g_wc);
     for (Panel* p : g_panels) {
+        if (p == &g_selfStats) // shown on hover only: not dragged or clicked
+            continue;
         if (!p->window || !WindowIsVisible(p->window) || (under && under != p->window))
             continue;
         if (gx >= p->x && gy >= p->y && gx < p->x + p->gw && gy < p->y + p->gh)

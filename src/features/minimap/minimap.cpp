@@ -102,6 +102,10 @@ WindowResizeToFn WindowResizeTo;
 WindowSizeLimitsFn WindowSizeLimits;
 ScreenSizeFn ScreenSize;
 MouseWindowFn MouseWindow; // WindowController_c::GetMouseWindow
+using EvaluateFn = bool(__thiscall*)(void* self);
+EvaluateFn CriteriaEvaluate; // CriteriaMonitor_c::Evaluate (optional)
+const uint8_t* g_guiBase = nullptr;
+size_t g_guiSize = 0;
 ViewCtorFn ViewCtor;
 ViewSetFrameFn ViewSetFrame;
 ViewGetBoundsFn ViewGetBounds;
@@ -173,6 +177,8 @@ constexpr unsigned kWindowFlags = 0xE3C;
 constexpr unsigned kViewResize = 0xF;
 constexpr unsigned kViewFlags = 2;
 constexpr int kWcWindowList = 0x88; // WindowController_c: std::list<Window*>
+constexpr int kCompassCriteria = 0x74; // CompassWindow_c: CriteriaMonitor_c (its show condition)
+constexpr char kCompassClass[] = ".?AVCompassWindow_c@@";
 constexpr int kCcAlive = 0xB8;      // ControlCenterModule_c: the GUI was made
 constexpr int kViewportDeviceState = 0x08; // RViewPort_t: its DeviceState
 constexpr int kTextureSurface = 0x30;      // RTexture_t: its surface_t
@@ -272,6 +278,22 @@ bool ResolveAll()
     ok &= Resolve(GroundShadow, "DisplaySystem.dll", "?GetShadowTexture@AnarchyGround_t@@QBEPBVRTexture_t@@HH@Z");
     ok &= Resolve(GroundHiTexture, "DisplaySystem.dll", "?CreateHiTexture@AnarchyGroundData_t@@QBEXPBX@Z");
     ok &= Resolve(BuildingMap, "DisplaySystem.dll", "?CreateBuildingMap@Patch_t@AnarchyGroundData_t@@QAEX_NPAUIDirectDrawPalette@@@Z");
+    if (HMODULE h = GetModuleHandleA(gui)) {
+        g_guiBase = reinterpret_cast<const uint8_t*>(h);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_guiBase + reinterpret_cast<const IMAGE_DOS_HEADER*>(h)->e_lfanew);
+        g_guiSize = nt->OptionalHeader.SizeOfImage;
+    }
+    // Optional: without it the game's compass comes back only after a relog. In GUI.dll or Utils.dll
+    // depending on the build.
+    CriteriaEvaluate = nullptr;
+    for (const char* m : {gui, "Utils.dll"}) {
+        if (HMODULE h = GetModuleHandleA(m))
+            CriteriaEvaluate = reinterpret_cast<EvaluateFn>(GetProcAddress(h, "?Evaluate@CriteriaMonitor_c@@QAE_NXZ"));
+        if (CriteriaEvaluate)
+            break;
+    }
+    if (!CriteriaEvaluate)
+        Log("[minimap] CriteriaMonitor_c::Evaluate not found - the game's compass comes back only after a relog");
     return ok;
 }
 
@@ -305,9 +327,63 @@ bool InGame()
     return cc && *(static_cast<const uint8_t*>(cc) + kCcAlive) && game::ClientInstance() != 0;
 }
 
+bool InGui(const void* p, size_t len = 4)
+{
+    const auto* b = static_cast<const uint8_t*>(p);
+    return g_guiBase && b >= g_guiBase && b + len <= g_guiBase + g_guiSize;
+}
+
+// The object's class name from MSVC run-time type info (as the bars): vtable[-1] is the complete
+// object locator, whose type descriptor (+0x0C) has the decorated name at +8; every pointer in GUI.dll.
+bool IsClass(void* obj, const char* name)
+{
+    if (!obj)
+        return false;
+    void** vtable = *static_cast<void***>(obj);
+    if (!InGui(vtable - 1))
+        return false;
+    const auto* col = static_cast<const uint8_t*>(vtable[-1]);
+    if (!InGui(col, 0x14))
+        return false;
+    const auto* td = *reinterpret_cast<const uint8_t* const*>(col + 0x0C);
+    const size_t len = strlen(name) + 1;
+    return InGui(td, 8 + len) && memcmp(td + 8, name, len) == 0;
+}
+
+// The game's compass (CompassWindow_c "compass_window", GUI 0x1006D433; shown while
+// "dvalue:cc_section1 && dvalue:cc_compass") is hidden while the minimap is on, which has its own
+// compass; when it's off, the one Clarity hid comes back if its own condition says so.
+void* g_hiddenCompass = nullptr;
+
+void SyncGameCompass(void* wc, bool hide)
+{
+    void* compass = nullptr;
+    auto* head = *reinterpret_cast<ListNode**>(static_cast<uint8_t*>(wc) + kWcWindowList);
+    int guard = 0;
+    for (ListNode* n = head ? head->next : nullptr; n && n != head && guard < 4096 && !compass; n = n->next, ++guard)
+        if (IsClass(n->value, kCompassClass))
+            compass = n->value;
+    if (!compass) {
+        g_hiddenCompass = nullptr;
+        return;
+    }
+    if (hide) {
+        if (WindowIsVisible(compass))
+            WindowShow(compass, false);
+        g_hiddenCompass = compass;
+    } else if (g_hiddenCompass == compass) {
+        g_hiddenCompass = nullptr;
+        if (CriteriaEvaluate && CriteriaEvaluate(static_cast<uint8_t*>(compass) + kCompassCriteria))
+            WindowShow(compass, true);
+    }
+}
+
 // --- the window -----------------------------------------------------------------------------
 
-constexpr float kFramePx = 18.0f; // the frame's rings outside the map's circle
+// Outside the map's circle: the frame's ring (to 10 px out), with the badges (radius 11) and the rim
+// markers centred on it (kRingMid).
+constexpr float kFramePx = 15.0f;
+constexpr float kRingMid = 5.5f; // the gunmetal ring's middle, from the map's edge
 constexpr float kMarginPx = 2.0f;
 
 struct Minimap {
@@ -1180,6 +1256,33 @@ bool Where(const void* n3, int* map, Spot* spot)
     return *map >= 0;
 }
 
+// Dungeons the planet map has a picture of (Saavick's map draws some static dungeons, e.g. Temple of
+// Three Winds, on the map itself, at their own place in its coordinates file): there the planet layer
+// is used whatever [Minimap] Layer says. Such a dungeon is a playfield on one of the maps where
+// MapData_c has rooms and no ground (indoors: the local layer would show only the game's room map).
+// The layers button there switches between the two for that visit only (g_dungeonLocal, not saved).
+uint32_t g_dungeonPf = 0;      // the playfield the choice below is for
+bool g_dungeonLocal = false;   // in that dungeon, the local layer was picked with the layers button
+bool g_inMappedDungeon = false; // this frame: you're in such a dungeon
+bool g_planetWanted = false;    // this frame: the planet layer is the one to show
+
+bool InMappedDungeon(const void* n3, const uint8_t* md)
+{
+    if (!n3 || !md || At<void*>(md, kMdGround) || At<const uint8_t*>(md, kMdRoomsBegin) == At<const uint8_t*>(md, kMdRoomsEnd))
+        return false;
+    ReadMapChoice();
+    const game::Identity me{50000, game::ClientInstance()};
+    game::Identity pf{};
+    float pos[3] = {};
+    if (!PositionData(n3, &me, &pf, pos))
+        return false;
+    if (pf.instance != g_dungeonPf) {
+        g_dungeonPf = pf.instance;
+        g_dungeonLocal = false;
+    }
+    return MapOf(pf.instance) >= 0;
+}
+
 // The level shown: [Minimap] PlanetLevel, -1 (or out of range) = the most detailed.
 int PlanetLevelShown()
 {
@@ -1672,7 +1775,7 @@ struct Art {
     int w = 0, h = 0;
 };
 Art g_frameArt; // the frame, for the minimap's current pixel size
-Art g_badgeArt; // a badge: silver rim, dark inside
+Art g_badgeArt; // a badge: dark edge, gunmetal ring as the frame's, dark inside
 
 int PowerOfTwo(int v)
 {
@@ -1693,7 +1796,7 @@ void* MakeArt(const char* name, const std::vector<uint32_t>& pixels, int size)
 }
 
 // The frame around a map circle of radius r in a w x h area: a dark gap, the gunmetal ring with teal
-// glow arcs, a dark ring, the silver rim (lit from the top left), a dark edge - as the bars' frames.
+// glow arcs, a dark outline - as the bars' frames.
 void PaintFrame(int w, int h, float r)
 {
     if (g_frameArt.tex)
@@ -1706,23 +1809,21 @@ void PaintFrame(int w, int h, float r)
         for (int x = 0; x < w; ++x) {
             const float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
             const float d = std::sqrt(dx * dx + dy * dy);
-            if (d < r - 2.0f || d > r + 18.0f)
+            if (d < r - 2.0f || d > r + 11.0f)
                 continue;
             const float light = d > 0.0f ? (-dx * 0.45f - dy * 0.9f) / d : 0.0f; // -1..1, the top lighter
             Premul px;
             Over(px, 0x08090B, RingCover(d, r - 1.0f, r + 2.0f));
-            Over(px, Mix(0x2C3136, 0x434A51, light * 0.5f + 0.5f), RingCover(d, r + 2.0f, r + 7.0f));
+            Over(px, Mix(0x2C3136, 0x434A51, light * 0.5f + 0.5f), RingCover(d, r + 2.0f, r + 9.0f));
             float a = std::atan2(dy, dx); // clockwise from the right
             if (a < 0.0f)
                 a += 2.0f * kPi;
             for (int i = 0; i < 4; ++i) { // the teal arcs, soft at their ends
                 const float a0 = kPi * 0.5f * i + 0.35f, a1 = a0 + 0.75f;
                 const float along = std::min(a - a0, a1 - a) * d; // pixels from the nearer end
-                Over(px, 0x28D2BE, RingCover(d, r + 4.0f, r + 5.0f) * std::clamp(along + 0.5f, 0.0f, 1.0f));
+                Over(px, 0x28D2BE, RingCover(d, r + 5.0f, r + 6.0f) * std::clamp(along + 0.5f, 0.0f, 1.0f));
             }
-            Over(px, 0x181C20, RingCover(d, r + 7.0f, r + 10.0f));
-            Over(px, Mix(0x7C8288, 0xE6EAEE, light * 0.5f + 0.5f), RingCover(d, r + 10.0f, r + 15.0f));
-            Over(px, 0x1E2226, RingCover(d, r + 15.0f, r + 17.0f));
+            Over(px, 0x0B0C0E, RingCover(d, r + 9.0f, r + 10.0f));
             pixels[static_cast<size_t>(y) * size + x] = Straight(px);
         }
     g_frameArt.tex = MakeArt("clarity_minimap_frame", pixels, size);
@@ -1740,9 +1841,9 @@ void PaintBadge()
             const float d = std::sqrt(dx * dx + dy * dy);
             const float light = d > 0.0f ? (-dx * 0.45f - dy * 0.9f) / d : 0.0f;
             Premul px;
-            Over(px, 0x0C0E10, RingCover(d, -1.0f, 12.0f)); // a dark edge
-            Over(px, Mix(0x7C8288, 0xE6EAEE, light * 0.5f + 0.5f), RingCover(d, -1.0f, 11.0f));
-            Over(px, 0x1A1E22, RingCover(d, -1.0f, 9.5f));
+            Over(px, 0x0B0C0E, RingCover(d, -1.0f, 11.0f)); // a dark edge
+            Over(px, Mix(0x2C3136, 0x58606A, light * 0.5f + 0.5f), RingCover(d, -1.0f, 10.0f));
+            Over(px, 0x15181B, RingCover(d, -1.0f, 8.0f));
             pixels[static_cast<size_t>(y) * 32 + x] = Straight(px);
         }
     g_badgeArt.tex = MakeArt("clarity_minimap_badge", pixels, 32);
@@ -1779,7 +1880,7 @@ void Badge(void* viewport, int k, float cx, float cy, float rad, float a, uint32
 // in gold.
 void Compass(void* viewport, float cx, float cy, float r, float north)
 {
-    const float band = r + kFramePx * 0.5f;
+    const float band = r + kRingMid;
     for (int k = 0; k < 4; ++k)
         Badge(viewport, k, cx, cy, band, north + kPi * 0.5f * k, k == 0 ? 0xFFFFC83C : 0xFFE6E8EA);
 }
@@ -1805,11 +1906,11 @@ bool ZoomOutAvailable()
 
 void ZoomButtons(void* viewport, float cx, float cy, float r)
 {
-    const float band = r + kFramePx * 0.5f;
+    const float band = r + kRingMid;
     Badge(viewport, kGlyphPlus, cx, cy, band, kZoomInAngle, ZoomInAvailable() ? 0xFF28D2BE : 0xFF5A6066);
     Badge(viewport, kGlyphMinus, cx, cy, band, kZoomOutAngle, ZoomOutAvailable() ? 0xFF28D2BE : 0xFF5A6066);
     // The layer button: the layers symbol, teal on the local map, gold on the planet map.
-    Badge(viewport, kGlyphLayers, cx, cy, band, kLayerAngle, Cfg().minimap.layer == 1 ? 0xFFFFC83C : 0xFF28D2BE);
+    Badge(viewport, kGlyphLayers, cx, cy, band, kLayerAngle, g_planetWanted ? 0xFFFFC83C : 0xFF28D2BE);
 }
 
 void Arrow(void* viewport, float cx, float cy, float size, float heading, uint32_t fill, uint32_t edge)
@@ -1896,10 +1997,10 @@ bool WaypointMarker(void* viewport, const void* n3, bool planet, float ppm, floa
     return true;
 }
 
-// The rim markers: triangles with a dark edge on the frame. The heading marker (light, on the outer silver
-// rim) points in from where you face; the mission marker (gold, as the N; on the inner ring) points out
-// toward the waypoint. Painted once
-// each (16x16, smooth edges, pointing in), drawn turned.
+// The rim markers: triangles with a dark edge on the frame's ring. The heading marker (light) points in
+// from where you face, the mission marker (gold, as the N) points out toward the waypoint; the heading is
+// drawn last, over the other where they meet. Painted once each (16x16, smooth edges, pointing in), drawn
+// turned.
 Art g_headingArt, g_missionArt;
 constexpr int kHeadingPx = 16;
 constexpr uint32_t kHeadingRgb = 0xF4F6F8, kMissionRgb = 0xFFC83C;
@@ -1956,14 +2057,14 @@ void HeadingMarker(void* viewport, float cx, float cy, float r, float heading)
 {
     if (!g_headingArt.tex)
         g_headingArt = PaintRimMarker("clarity_minimap_heading", kHeadingRgb);
-    RimMarker(viewport, g_headingArt, cx, cy, r + 12.5f, heading, 0.0f); // the silver rim's middle
+    RimMarker(viewport, g_headingArt, cx, cy, r + kRingMid, heading, 0.0f); // on the ring
 }
 
 void MissionMarker(void* viewport, float cx, float cy, float r, float angle)
 {
     if (!g_missionArt.tex)
         g_missionArt = PaintRimMarker("clarity_minimap_mission", kMissionRgb);
-    RimMarker(viewport, g_missionArt, cx, cy, r + 4.5f, angle, kPi); // the inner ring; turned around: pointing out
+    RimMarker(viewport, g_missionArt, cx, cy, r + kRingMid, angle, kPi); // on the ring; turned around: pointing out
 }
 
 // The frame: its painting for this size (made again when the size changes), drawn 1:1.
@@ -2012,7 +2113,9 @@ void __fastcall Render(void* view, void* /*edx*/, void* viewport, float /*alpha*
     const uint8_t* md = g_mapData ? static_cast<const uint8_t*>(*g_mapData) : nullptr;
     float youX = cx, youY = cy; // where you are on the screen
     float localPpm = 0.0f;
-    const bool planet = n3 && Cfg().minimap.layer == 1 && Planet(viewport, n3, cx, cy, r, &youX, &youY);
+    g_inMappedDungeon = InMappedDungeon(n3, md);
+    g_planetWanted = g_inMappedDungeon ? !g_dungeonLocal : Cfg().minimap.layer == 1;
+    const bool planet = n3 && g_planetWanted && Planet(viewport, n3, cx, cy, r, &youX, &youY);
     g_planetShown = planet;
     if (md && n3 && !planet) {
         const float mapScale = At<float>(md, kMdMapScale);
@@ -2203,10 +2306,12 @@ void Update(HWND hwnd)
     void* wc = WindowController();
     if (wc != g_wc) {
         Forget();
+        g_hiddenCompass = nullptr;
         g_wc = wc;
     }
     if (!wc)
         return;
+    SyncGameCompass(wc, Replacing());
     if (g_map.window && (!InWindowList(wc, g_map.window) || *static_cast<void**>(g_map.window) != g_map.windowVtable)) {
         Log("[minimap] the window was removed by the game - making it again");
         Forget();
@@ -2324,7 +2429,7 @@ int ButtonAt(HWND hwnd, LPARAM lp)
     float dx, dy, r;
     if (!Over(hwnd, lp) || !Relative(hwnd, static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp)), &dx, &dy, &r))
         return 0;
-    const float band = r + kFramePx * 0.5f;
+    const float band = r + kRingMid;
     const float hit = (kButtonRadius + 2.0f) * (kButtonRadius + 2.0f);
     auto onButton = [&](float a) {
         const float bx = std::sin(a) * band, by = -std::cos(a) * band;
@@ -2410,7 +2515,9 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
         if (g_dragging || (wp & (MK_RBUTTON | MK_SHIFT | MK_CONTROL)))
             return false;
         if (const int b = ButtonAt(hwnd, lp)) {
-            if (b == 2) // the other layer, saved to [Minimap] Layer (read back at once: Clarity.ini is reloaded)
+            if (b == 2 && g_inMappedDungeon) // the other layer, for this dungeon only
+                g_dungeonLocal = !g_dungeonLocal;
+            else if (b == 2) // the other layer, saved to [Minimap] Layer (read back at once: Clarity.ini is reloaded)
                 WritePrivateProfileStringW(L"Minimap", L"Layer", Cfg().minimap.layer == 1 ? L"0" : L"1", ConfigPath().c_str());
             else if (g_planetShown)
                 PlanetZoom(b);

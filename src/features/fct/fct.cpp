@@ -809,6 +809,10 @@ void __fastcall Hook_Combat(void* self, void* /*edx*/, int event, uint8_t* targe
     }
     if (!cfg.enable || !amount || !target)
         return; // (with no amount the game itself shows nothing, not even the chat line)
+    // 0x43 / 0x44 come from the character-action handler with its character (whose action it is) as
+    // the attacker (client 0x1005DC67 / 0x1005DC86); only ours.
+    if ((event == kEventGotNano || event == kEventYouGaveNano) && !(attacker && Field<uint8_t>(attacker, kDynelIsClientChar)))
+        return;
     if (event == kEventGotNano) {
         ShowNanoGain(amount);
         return;
@@ -854,11 +858,14 @@ void __fastcall Hook_CharAction(void* self, void* /*edx*/, int action, int* p20,
     g_origCharAction(self, action, p20, chatGroup, p28, str);
 
     const FctConfig& cfg = Cfg().fct;
+    // The handler is the character's own (this = its n3Dynel_t); the game also gets other characters'
+    // actions, and its 0x8C case (client 0x1005DC96) doesn't check whose it is.
+    const bool mine = self && Field<uint8_t>(static_cast<uint8_t*>(self), kDynelIsClientChar);
     if (cfg.debug)
-        Log("[fct] character action 0x%X group=0x%X p20=(%d, %d) p28=(%d, %d)", action, chatGroup, p20 ? p20[0] : 0,
-            p20 ? p20[1] : 0, p28 ? p28[0] : 0, p28 ? p28[1] : 0);
+        Log("[fct] character action 0x%X%s group=0x%X p20=(%d, %d) p28=(%d, %d)", action, mine ? " (me)" : "", chatGroup,
+            p20 ? p20[0] : 0, p20 ? p20[1] : 0, p28 ? p28[0] : 0, p28 ? p28[1] : 0);
     // "You increased your nanopool with %d points." (nano programs, items, perks): chat only.
-    if (cfg.enable && action == kActionNanoPool && p28 && p28[1] > 0) {
+    if (cfg.enable && action == kActionNanoPool && mine && p28 && p28[1] > 0) {
         ShowNanoGain(p28[1]);
         return;
     }

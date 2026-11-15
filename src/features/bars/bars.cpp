@@ -15,9 +15,13 @@
 // (TargetingModule_t::SetTarget, as a click on the character).
 #include "bars.h"
 
+#include "../../core/gui.h"
+#include "../../core/perf.h"
 #include "../../core/config.h"
+#include "../../core/frame_paint.h"
 #include "../../core/game.h"
 #include "../../core/log.h"
+#include "../../core/canvas.h"
 #include "../../core/n3.h"
 #include "../../core/text_raster.h"
 #include "../../core/wndproc.h"
@@ -305,202 +309,8 @@ int S(float v)
     return static_cast<int>(std::lround(v * g_scale));
 }
 
-// Premultiplied float RGBA.
-struct Canvas {
-    int w = 0, h = 0;
-    std::vector<float> px;
-
-    void Reset(int width, int height)
-    {
-        w = width;
-        h = height;
-        px.assign(static_cast<size_t>(w) * h * 4, 0.0f);
-    }
-
-    void Blend(int x, int y, uint32_t rgb, float a)
-    {
-        if (x < 0 || y < 0 || x >= w || y >= h || a <= 0.0f)
-            return;
-        a = std::min(a, 1.0f);
-        float* p = &px[(static_cast<size_t>(y) * w + x) * 4];
-        p[0] = ((rgb >> 16) & 0xFF) / 255.0f * a + p[0] * (1.0f - a);
-        p[1] = ((rgb >> 8) & 0xFF) / 255.0f * a + p[1] * (1.0f - a);
-        p[2] = (rgb & 0xFF) / 255.0f * a + p[2] * (1.0f - a);
-        p[3] = a + p[3] * (1.0f - a);
-    }
-
-    // An antialiased rounded rectangle from (x0, y0) to (x1, y1) (exclusive, fractional), its colour
-    // going from rgbTop to rgbBottom, cut off left of cx0 and right of cx1 (the filled part of a bar).
-    void RoundRect(float x0, float y0, float x1, float y1, float radius, uint32_t rgbTop, uint32_t rgbBottom, float alpha,
-                   float cx0 = -1e9f, float cx1 = 1e9f, const std::vector<uint32_t>* profile = nullptr)
-    {
-        const float hx = (x1 - x0) * 0.5f, hy = (y1 - y0) * 0.5f;
-        if (hx <= 0.0f || hy <= 0.0f || cx1 <= cx0)
-            return;
-        const float mx = x0 + hx, my = y0 + hy;
-        const float r = std::min(radius, std::min(hx, hy));
-        for (int y = static_cast<int>(std::floor(y0)); y < static_cast<int>(std::ceil(y1)); ++y) {
-            const float cy = y + 0.5f;
-            const float t = std::clamp((cy - y0) / (y1 - y0), 0.0f, 1.0f);
-            const uint32_t rgb = profile && !profile->empty()
-                                     ? ProfileAt(*profile, (y - y0) / (y1 - y0), (y + 1 - y0) / (y1 - y0))
-                                     : Mix(rgbTop, rgbBottom, t);
-            for (int x = static_cast<int>(std::floor(std::max(x0, cx0))); x < static_cast<int>(std::ceil(std::min(x1, cx1))); ++x) {
-                const float cx = x + 0.5f;
-                const float qx = std::fabs(cx - mx) - (hx - r), qy = std::fabs(cy - my) - (hy - r);
-                const float d = std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) + std::min(std::max(qx, qy), 0.0f) - r;
-                const float cover = std::clamp(0.5f - d, 0.0f, 1.0f);
-                const float horiz = std::clamp(std::min(x + 1.0f, cx1) - std::max(static_cast<float>(x), cx0), 0.0f, 1.0f);
-                Blend(x, y, rgb, alpha * cover * horiz);
-            }
-        }
-    }
-
-    // Signed distance (pixels, < 0 inside) from a point to the rectangle (x0, y0)-(x1, y1) with its
-    // corners cut off at 45 degrees, `cut` along each side.
-    static float ChamferDist(float px, float py, float x0, float y0, float x1, float y1, float cut)
-    {
-        const float hx = (x1 - x0) * 0.5f, hy = (y1 - y0) * 0.5f;
-        const float ax = std::fabs(px - (x0 + hx)), ay = std::fabs(py - (y0 + hy));
-        return std::max(std::max(ax - hx, ay - hy), (ax + ay - (hx + hy - cut)) * 0.70710678f);
-    }
-
-    // The cut-corner rectangle filled, antialiased, in rgbAt(t, row) (t from 0 at the top to 1 at
-    // the bottom).
-    template <typename F>
-    void Chamfer(float x0, float y0, float x1, float y1, float cut, float alpha, F&& rgbAt)
-    {
-        for (int y = std::max(0, static_cast<int>(std::floor(y0))); y < std::min(h, static_cast<int>(std::ceil(y1))); ++y) {
-            const uint32_t rgb = rgbAt(std::clamp((y + 0.5f - y0) / (y1 - y0), 0.0f, 1.0f), y);
-            for (int x = std::max(0, static_cast<int>(std::floor(x0))); x < std::min(w, static_cast<int>(std::ceil(x1))); ++x) {
-                const float d = ChamferDist(x + 0.5f, y + 0.5f, x0, y0, x1, y1, cut);
-                Blend(x, y, rgb, alpha * std::clamp(0.5f - d, 0.0f, 1.0f));
-            }
-        }
-    }
-
-    // A line `width` pixels wide just inside the cut-corner rectangle's edge, where keep(x, y) says.
-    template <typename K>
-    void ChamferStroke(float x0, float y0, float x1, float y1, float cut, float width, uint32_t rgb, float alpha, K&& keep)
-    {
-        for (int y = std::max(0, static_cast<int>(std::floor(y0))); y < std::min(h, static_cast<int>(std::ceil(y1))); ++y) {
-            for (int x = std::max(0, static_cast<int>(std::floor(x0))); x < std::min(w, static_cast<int>(std::ceil(x1))); ++x) {
-                if (!keep(x + 0.5f, y + 0.5f))
-                    continue;
-                const float d = ChamferDist(x + 0.5f, y + 0.5f, x0, y0, x1, y1, cut);
-                const float cover = std::clamp(0.5f - d, 0.0f, 1.0f) - std::clamp(0.5f - (d + width), 0.0f, 1.0f);
-                Blend(x, y, rgb, alpha * cover);
-            }
-        }
-    }
-
-    // A convex polygon filled, antialiased.
-    void Polygon(const std::vector<std::pair<float, float>>& pts, uint32_t rgb, float alpha)
-    {
-        float area = 0.0f, minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-        for (size_t i = 0; i < pts.size(); ++i) {
-            const auto& a = pts[i];
-            const auto& b = pts[(i + 1) % pts.size()];
-            area += a.first * b.second - b.first * a.second;
-            minX = std::min(minX, a.first), maxX = std::max(maxX, a.first);
-            minY = std::min(minY, a.second), maxY = std::max(maxY, a.second);
-        }
-        const float sign = area > 0.0f ? 1.0f : -1.0f;
-        for (int y = std::max(0, static_cast<int>(std::floor(minY)) - 1); y < std::min(h, static_cast<int>(std::ceil(maxY)) + 1); ++y) {
-            for (int x = std::max(0, static_cast<int>(std::floor(minX)) - 1); x < std::min(w, static_cast<int>(std::ceil(maxX)) + 1); ++x) {
-                float d = -1e9f;
-                for (size_t i = 0; i < pts.size(); ++i) {
-                    const auto& a = pts[i];
-                    const auto& b = pts[(i + 1) % pts.size()];
-                    const float ex = b.first - a.first, ey = b.second - a.second;
-                    const float len = std::hypot(ex, ey);
-                    if (len <= 0.0f)
-                        continue;
-                    // Outward normal: right of the edge for a clockwise (on screen) polygon.
-                    const float nx = sign * ey / len, ny = -sign * ex / len;
-                    d = std::max(d, (x + 0.5f - a.first) * nx + (y + 0.5f - a.second) * ny);
-                }
-                Blend(x, y, rgb, alpha * std::clamp(0.5f - d, 0.0f, 1.0f));
-            }
-        }
-    }
-
-    // A line `width` pixels thick from (x0, y0) to (x1, y1), antialiased.
-    void Line(float x0, float y0, float x1, float y1, float width, uint32_t rgb, float alpha)
-    {
-        const float r = width * 0.5f;
-        const float dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
-        for (int y = std::max(0, static_cast<int>(std::floor(std::min(y0, y1) - r)) - 1);
-             y < std::min(h, static_cast<int>(std::ceil(std::max(y0, y1) + r)) + 1); ++y) {
-            for (int x = std::max(0, static_cast<int>(std::floor(std::min(x0, x1) - r)) - 1);
-                 x < std::min(w, static_cast<int>(std::ceil(std::max(x0, x1) + r)) + 1); ++x) {
-                const float qx = x + 0.5f - x0, qy = y + 0.5f - y0;
-                const float t = len2 > 0.0f ? std::clamp((qx * dx + qy * dy) / len2, 0.0f, 1.0f) : 0.0f;
-                const float d = std::hypot(qx - t * dx, qy - t * dy);
-                Blend(x, y, rgb, alpha * std::clamp(r + 0.5f - d, 0.0f, 1.0f));
-            }
-        }
-    }
-
-    // Another canvas over this one, its top-left at (x0, y0).
-    void Paste(const Canvas& o, int x0, int y0)
-    {
-        for (int y = 0; y < o.h; ++y) {
-            for (int x = 0; x < o.w; ++x) {
-                const int tx = x0 + x, ty = y0 + y;
-                const float* s = &o.px[(static_cast<size_t>(y) * o.w + x) * 4];
-                if (s[3] <= 0.0f || tx < 0 || ty < 0 || tx >= w || ty >= h)
-                    continue;
-                float* d = &px[(static_cast<size_t>(ty) * w + tx) * 4];
-                for (int i = 0; i < 4; ++i)
-                    d[i] = s[i] + d[i] * (1.0f - s[3]);
-            }
-        }
-    }
-
-    void Mask(int x0, int y0, const raster::Mask& m, uint32_t rgb, float alpha)
-    {
-        for (int y = 0; y < m.h; ++y)
-            for (int x = 0; x < m.w; ++x)
-                Blend(x0 + x, y0 + y, rgb, m.a[static_cast<size_t>(y) * m.w + x] * alpha);
-    }
-
-    // The average colour of the profile between fractions t0 and t1 of its length.
-    static uint32_t ProfileAt(const std::vector<uint32_t>& profile, float t0, float t1)
-    {
-        const float n = static_cast<float>(profile.size());
-        const float a = std::clamp(t0, 0.0f, 1.0f) * n, b = std::max(std::clamp(t1, 0.0f, 1.0f) * n, a + 1e-3f);
-        float r = 0, g = 0, bl = 0, wsum = 0;
-        for (int i = static_cast<int>(a); i < static_cast<int>(std::ceil(b)) && i < static_cast<int>(n); ++i) {
-            const float w = std::min(b, i + 1.0f) - std::max(a, static_cast<float>(i));
-            if (w <= 0.0f)
-                continue;
-            const uint32_t c = profile[static_cast<size_t>(i)];
-            r += ((c >> 16) & 0xFF) * w;
-            g += ((c >> 8) & 0xFF) * w;
-            bl += (c & 0xFF) * w;
-            wsum += w;
-        }
-        if (wsum <= 0.0f)
-            return profile.back();
-        return (static_cast<uint32_t>(r / wsum + 0.5f) << 16) | (static_cast<uint32_t>(g / wsum + 0.5f) << 8) |
-               static_cast<uint32_t>(bl / wsum + 0.5f);
-    }
-
-    static uint32_t Mix(uint32_t a, uint32_t b, float t)
-    {
-        auto ch = [&](int shift) {
-            const float va = static_cast<float>((a >> shift) & 0xFF), vb = static_cast<float>((b >> shift) & 0xFF);
-            return static_cast<uint32_t>(std::lround(va + (vb - va) * t)) << shift;
-        };
-        return ch(16) | ch(8) | ch(0);
-    }
-};
-
-uint32_t Darker(uint32_t rgb, float f)
-{
-    return Canvas::Mix(0x000000, rgb, f);
-}
+using gfx::Canvas;
+using gfx::Darker;
 
 enum FontId { kFontValue, kFontName, kFontLabel, kFontCount };
 raster::Font g_fonts[kFontCount];
@@ -772,6 +582,8 @@ struct Panel {
     float cfgSeenX = -2, cfgSeenY = -2; // the [Bars] position last taken
     std::string drawn;         // what the texture shows (redrawn when this changes)
     std::string barsDrawn;     // what its bars show (only their part is sent when just this changes)
+    Canvas base;               // the panel as last painted without its bars (name, frame): a health change
+                               // paints only the bars over a copy of it
     game::Identity id{};       // whom it shows: a click selects them
     // A second surface over the first, for what changes only in strength (the fight target's
     // outline): faded with its alpha, without repainting or sending anything.
@@ -1026,11 +838,13 @@ void Show(Panel& p, bool show)
 }
 
 // Makes the panel if needed, sizes it, puts its frame at (x, y) (unless it's being dragged; the frame
-// is frameX pixels into the panel), and repaints it: all of it when `state` changed, only barsArea
-// (pixels) when just `bars` did.
-template <typename Paint>
+// is frameX pixels into the panel), and repaints it: paintBase (everything but the bars) when `state`
+// changed, kept; then paintBars over a copy of that, sending all of it, or only barsArea (pixels) when
+// just `bars` changed. (Painting the whole panel - its name through GDI - for each health change cost
+// ~5 ms several times a second.)
+template <typename PaintBase, typename PaintBars>
 void Present(Panel& p, int w, int h, int frameX, float x, float y, const std::string& state, const std::string& bars,
-             const RECT& barsArea, HWND hwnd, Paint&& paint)
+             const RECT& barsArea, HWND hwnd, PaintBase&& paintBase, PaintBars&& paintBars)
 {
     GuiPoint screen{};
     const float k = GuiPerPx(hwnd, &screen);
@@ -1053,11 +867,14 @@ void Present(Panel& p, int w, int h, int frameX, float x, float y, const std::st
         if (p.x != oldX || p.y != oldY)
             WindowMoveTo(p.window, p.x, p.y);
     }
-    const bool all = state != p.drawn;
+    const bool all = state != p.drawn || p.base.w != w || p.base.h != h;
     if (all || bars != p.barsDrawn) {
-        Canvas c;
-        c.Reset(w, h);
-        paint(c);
+        if (all) {
+            p.base.Reset(w, h);
+            paintBase(p.base);
+        }
+        Canvas c = p.base;
+        paintBars(c);
         Upload(p, p.sprite, p.surface, c, all ? nullptr : &barsArea);
         p.drawn = state;
         p.barsDrawn = bars;
@@ -1131,20 +948,20 @@ void AppendText(std::string& state, const std::wstring& s)
 // and a dark inner panel; teal lines glow along the lower inner corners and a teal light sits on the
 // top right. The bars are set into it in silver bezels, and the name is under
 // them in spaced capitals.
-constexpr uint32_t kTealRgb = 0x2FD3B9;
-constexpr uint32_t kLabelRgb = 0xD2D6DA;
+using frame::kTealRgb;
+using frame::kLabelRgb;
 
 int FrameOutline()
 {
-    return 1;
+    return frame::Outline(g_scale);
 }
 int FrameRing()
 {
-    return std::max(2, S(4));
+    return frame::Ring(g_scale);
 }
 int Bezel() // round each bar
 {
-    return std::max(3, S(4));
+    return frame::Bezel(g_scale);
 }
 // The edge of the inner panel, from the panel's edge.
 int FrameInner()
@@ -1157,12 +974,12 @@ int FrameInset() // panel edge -> bars
 }
 float FrameCut()
 {
-    return static_cast<float>(std::max(8, S(16)));
+    return frame::Cut(g_scale);
 }
 // The cut of the same corner `d` pixels further in (its edges parallel).
 float InnerCut(float cut, float d)
 {
-    return std::max(0.0f, cut - d * 0.5858f);
+    return frame::InnerCut(cut, d);
 }
 int CapH()
 {
@@ -1225,46 +1042,12 @@ void NameSize(int* w, int* h)
 // A teal line with a soft glow along the points.
 void TealPath(Canvas& c, const std::vector<std::pair<float, float>>& pts, float alpha)
 {
-    const float glow = static_cast<float>(std::max(2, S(3)));
-    const float core = static_cast<float>(std::max(1, S(1)));
-    for (size_t i = 1; i < pts.size(); ++i)
-        c.Line(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second, core + 2.0f * glow, kTealRgb, 0.10f * alpha);
-    for (size_t i = 1; i < pts.size(); ++i)
-        c.Line(pts[i - 1].first, pts[i - 1].second, pts[i].first, pts[i].second, core, Canvas::Mix(kTealRgb, 0xFFFFFF, 0.25f),
-               0.85f * alpha);
+    frame::TealPath(c, pts, alpha, g_scale);
 }
 
 void PaintFrameInto(Canvas& c)
 {
-    const float W = static_cast<float>(c.w), H = static_cast<float>(c.h), cut = FrameCut();
-    const float ring = static_cast<float>(FrameRing());
-    const float r0 = static_cast<float>(FrameOutline()), r1 = r0 + ring; // the ring, outside and inside
-    auto flat = [](uint32_t rgb) { return [rgb](float, int) { return rgb; }; };
-    auto above = [&](float y) { return [y](float, float py) { return py < y; }; };
-
-    // The outline, near black, then the gunmetal ring with a light line along its top.
-    c.Chamfer(0.0f, 0.0f, W, H, cut, 1.0f, flat(0x0B0C0E));
-    c.Chamfer(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, [](float t, int) { return Canvas::Mix(0x41454A, 0x2B2E32, t); });
-    c.ChamferStroke(r0, r0, W - r0, H - r0, InnerCut(cut, r0), 1.0f, 0x6A6F74, 0.8f, above(H * 0.5f));
-    // The inner panel, and steps in the ring: thicker along the middle of the top and of the bottom,
-    // with 45-degree ends.
-    c.Chamfer(r1, r1, W - r1, H - r1, InnerCut(cut, r1), 1.0f, [](float t, int) { return Canvas::Mix(0x191B1E, 0x101214, t); });
-    const float step = static_cast<float>(std::max(2, S(4)));
-    const uint32_t ringRgb = 0x34383C;
-    c.Polygon({{W * 0.27f, r1 - 0.5f}, {W * 0.73f, r1 - 0.5f}, {W * 0.73f - step, r1 + step}, {W * 0.27f + step, r1 + step}}, ringRgb, 1.0f);
-    c.Polygon({{W * 0.34f + step, H - r1 - step}, {W * 0.66f - step, H - r1 - step}, {W * 0.66f, H - r1 + 0.5f}, {W * 0.34f, H - r1 + 0.5f}},
-              ringRgb, 1.0f);
-
-    // Teal along the inner panel's lower corners: up the side, round the corner, along the bottom
-    // to the step and up it; less of it on the right.
-    const float t = r1 + 1.5f, ic = InnerCut(cut, t);
-    TealPath(c, {{t, H * 0.5f}, {t, H - t - ic}, {t + ic, H - t}, {W * 0.34f, H - t}, {W * 0.34f + step, H - t - step}, {W * 0.42f, H - t - step}},
-             1.0f);
-    TealPath(c, {{W - t, H * 0.62f}, {W - t, H - t - ic}, {W - t - ic, H - t}, {W * 0.8f, H - t}}, 0.7f);
-    // A teal light on the top right, in the ring, with a slanted mark before it.
-    const float ly = r0 + ring * 0.5f, lx1 = W - cut - S(14), lx0 = lx1 - S(22);
-    TealPath(c, {{lx0, ly}, {lx1, ly}}, 1.0f);
-    c.Line(lx0 - S(10), ly + ring * 0.5f, lx0 - S(6), ly - ring * 0.5f, 1.0f, 0x6A6F74, 0.8f);
+    frame::PaintFrame(c, g_scale);
 }
 
 // A w x h frame with its top-left at (x, y) (painted once per size).
@@ -1287,21 +1070,7 @@ void PaintFrame(Canvas& c, int x, int y, int w, int h)
 // deeper at the bottom with a bright edge again.
 std::vector<uint32_t> Gloss(uint32_t rgb)
 {
-    std::vector<uint32_t> rows(24);
-    for (size_t i = 0; i < rows.size(); ++i) {
-        const float t = (i + 0.5f) / rows.size();
-        if (t < 0.08f)
-            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.55f);
-        else if (t < 0.45f)
-            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.28f * (0.45f - t) / 0.37f);
-        else if (t < 0.85f)
-            rows[i] = Darker(rgb, 1.0f - (t - 0.45f) * 0.5f);
-        else if (t < 0.94f)
-            rows[i] = Darker(rgb, 0.78f);
-        else
-            rows[i] = Canvas::Mix(rgb, 0xFFFFFF, 0.3f);
-    }
-    return rows;
+    return frame::Gloss(rgb);
 }
 
 // A bar set into the panel at (x, y): a silver bezel, the track, the filled part shaded top to bottom
@@ -1310,34 +1079,9 @@ std::vector<uint32_t> Gloss(uint32_t rgb)
 void DrawBar(Canvas& c, int x, int y, int w, int h, int tenths, uint32_t rgb, const std::wstring& amount, float section = 0.0f,
              const std::vector<uint32_t>* shading = nullptr)
 {
-    const float b = static_cast<float>(Bezel());
-    const float fx = static_cast<float>(x), fy = static_cast<float>(y), fw = static_cast<float>(w), fh = static_cast<float>(h);
-    c.RoundRect(fx - b - 1.0f, fy - b - 1.0f, fx + fw + b + 1.0f, fy + fh + b + 1.0f, b + 2.0f, 0x0A0B0D, 0x0A0B0D, 1.0f);
-    c.RoundRect(fx - b, fy - b, fx + fw + b, fy + fh + b, b + 1.0f, 0x8A8F94, 0x4B4F53, 1.0f);
-    c.RoundRect(fx - b + 1.0f, fy - b + 1.0f, fx + fw + b - 1.0f, fy + fh + b - 1.0f, b, 0x3A3E42, 0x2C2F33, 1.0f);
-    c.RoundRect(fx - 1.0f, fy - 1.0f, fx + fw + 1.0f, fy + fh + 1.0f, 1.5f, 0x040506, 0x040506, 1.0f);
-    Canvas bar;
-    bar.Reset(w, h);
-    bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, 0x0B0D10, 0x17191D, 1.0f);
-    if (tenths >= 0) {
-        const float fill = fw * tenths / 1000.0f;
-        const std::vector<uint32_t> gloss = shading && !shading->empty() ? *shading : Gloss(rgb);
-        bar.RoundRect(0.0f, 0.0f, fw, fh, 0.0f, rgb, rgb, 1.0f, 0.0f, fill, &gloss);
-        const uint32_t edge = Canvas::Mix(rgb, 0xFFFFFF, 0.45f); // its bright end
-        if (fill >= 2.0f)
-            for (int ly = 0; ly < h; ++ly)
-                bar.Blend(static_cast<int>(fill) - 1, ly, edge, 0.7f);
-    }
-    // Section lines, lit on their right where the bar is filled.
-    for (int i = 1; section >= 2.0f && i * section < fw - section * 0.5f; ++i) {
-        const int sx = static_cast<int>(std::lround(i * section));
-        for (int sy = 0; sy < h; ++sy) {
-            bar.Blend(sx - 1, sy, 0x000000, 0.5f);
-            if (tenths >= 0 && sx < fw * tenths / 1000.0f)
-                bar.Blend(sx, sy, 0xFFFFFF, 0.18f);
-        }
-    }
-    DrawBarText(bar, 0.0f, fh, amount);
+    frame::BarBezel(c, x, y, w, h, g_scale);
+    Canvas bar = frame::BarBody(w, h, tenths >= 0 ? tenths / 1000.0f : -1.0f, rgb, section, shading);
+    DrawBarText(bar, 0.0f, static_cast<float>(h), amount);
     c.Paste(bar, x, y);
 }
 
@@ -1462,6 +1206,7 @@ void UpdateSelf(HWND hwnd)
         DrawSpaced(c, kFontName, level, NameSpacing(), nameX, nameTop, kTealRgb);
         DrawSpaced(c, kFontName, nameCaps, NameSpacing(), nameX + levelW + levelGap, nameTop, kLabelRgb);
         PaintFrame(c, frameX, top, fw, h - top);
+    }, [&](Canvas& c) {
         DrawBar(c, frameX + inset, top + inset, barW, healthH, hp, g_healthColours.fill, hpAmount, 0.0f, &g_healthColours.shading);
         DrawBar(c, frameX + inset, nanoTop, barW, nanoH, np, g_nanoColours.fill, npAmount, 0.0f, &g_nanoColours.shading);
         const float left = static_cast<float>(frameX + inset), right = left + barW;
@@ -1539,7 +1284,7 @@ void UpdateSelfStats(HWND hwnd, DWORD now)
         const float top = static_cast<float>(FrameInner() + S(6));
         for (int i = 0; i < kAcCount; ++i)
             DrawStatLine(c, kPopupAcs[i].label, values[i], static_cast<float>(pad), static_cast<float>(w - pad), top + (i + 0.5f) * rowH);
-    });
+    }, [](Canvas&) {});
     // Each time it opens: in front of whatever window is there (Window::MoveToFront, as a click on a window).
     if (!wasShown && g_selfStats.window && WindowIsVisible(g_selfStats.window) && WindowMoveToFront)
         WindowMoveToFront(g_selfStats.window);
@@ -1613,6 +1358,7 @@ void PresentTarget(Panel& p, const Row& r, bool small, bool outline, float x, fl
     Present(p, w, h, frameX, x, y, state, bars, barsArea, hwnd, [&](Canvas& c) {
         DrawName(c, r.name, kLabelRgb, top * 0.5f);
         PaintFrame(c, frameX, top, fw, h - top);
+    }, [&](Canvas& c) {
         if (r.hp >= 0)
             DrawBar(c, frameX + inset, top + inset, barW, barH, r.hp, r.rgb, {}, barW / sections);
     });
@@ -1638,7 +1384,7 @@ void PresentName(Panel& p, const Row& r, HWND hwnd)
     Present(p, w, h, 0, p.homeX, p.homeY, state, {}, RECT{}, hwnd, [&](Canvas& c) {
         PaintFrame(c, 0, 0, w, h);
         DrawName(c, r.name, kLabelRgb, h * 0.5f);
-    });
+    }, [](Canvas&) {});
 }
 
 // The fight target's panel; the nano target's panel smaller at its own place while there's a fight
@@ -1699,9 +1445,12 @@ void SyncGameBars(void* wc, bool hide)
         if (hide) {
             if (WindowIsVisible(w))
                 WindowShow(w, false);
+            gui::MouseThrough(w, true); // hidden, it still took the tooltips where it is
             hidden.push_back(w);
-        } else if (ours && CriteriaEvaluate && CriteriaEvaluate(static_cast<uint8_t*>(w) + kCharBarCriteria)) {
-            WindowShow(w, true); // its own condition says it's on
+        } else if (ours) {
+            gui::MouseThrough(w, false);
+            if (CriteriaEvaluate && CriteriaEvaluate(static_cast<uint8_t*>(w) + kCharBarCriteria))
+                WindowShow(w, true); // its own condition says it's on
         }
     });
     g_hiddenGameBars.swap(hidden);
@@ -1734,6 +1483,7 @@ void Update(HWND hwnd)
     const bool on = cfg.enable && !g_disabled && InGame();
     const DWORD now = GetTickCount();
     if (now - g_lastScan >= 250) {
+        perf::Slow slow("bars: game bars scan", 0, 2.0);
         g_lastScan = now;
         SyncGameBars(wc, on);
     }
@@ -1748,11 +1498,18 @@ void Update(HWND hwnd)
     g_guiPerPx = k;
     for (Panel* p : g_panels)
         UpdateHome(*p, screen, k);
-    UpdateSelf(hwnd);
-    if (!g_disabled)
+    {
+        perf::Slow slow("bars: yours", 0, 2.0);
+        UpdateSelf(hwnd);
+    }
+    if (!g_disabled) {
+        perf::Slow slow("bars: AC popup", 0, 2.0);
         UpdateSelfStats(hwnd, now);
-    if (!g_disabled)
+    }
+    if (!g_disabled) {
+        perf::Slow slow("bars: targets", 0, 2.0);
         UpdateTargets(hwnd, now);
+    }
 }
 
 // --- the game window: timer and dragging ----------------------------------------------------
@@ -1894,7 +1651,7 @@ bool Install()
         Log("[bars] disabled");
         return false;
     }
-    wndproc::Add(&OnMessage);
+    wndproc::Add(&OnMessage, "bars");
     Log("[bars] ready");
     return true;
 }

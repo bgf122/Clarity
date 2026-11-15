@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "log.h"
+#include "perf.h"
 
 #include <atomic>
 
@@ -11,6 +12,7 @@ namespace {
 
 constexpr int kMaxHandlers = 8;
 Handler g_handlers[kMaxHandlers];
+const char* g_names[kMaxHandlers];
 std::atomic<int> g_count{0};
 
 WNDPROC g_prev = nullptr;
@@ -24,6 +26,7 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     const int n = g_count.load(std::memory_order_acquire);
     for (int i = 0; i < n; ++i) {
         LRESULT result = 0;
+        perf::Slow slow(g_names[i], msg);
         if (g_handlers[i](hwnd, msg, wp, lp, &result))
             return result;
     }
@@ -32,12 +35,13 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 } // namespace
 
-void Add(Handler handler)
+void Add(Handler handler, const char* name)
 {
     const int n = g_count.load();
     if (n >= kMaxHandlers)
         return;
     g_handlers[n] = handler;
+    g_names[n] = name;
     g_count.store(n + 1, std::memory_order_release);
 }
 

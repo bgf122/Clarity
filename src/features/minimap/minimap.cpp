@@ -20,6 +20,7 @@
 // Outdoors (MapData +0x08, the ground): see Ground().
 #include "minimap.h"
 
+#include "../../core/gui.h"
 #include "../../core/config.h"
 #include "../../core/game.h"
 #include "../../core/hooks.h"
@@ -122,6 +123,7 @@ SetTextureFn DeviceSetTexture;
 ViewportFn RealizeStates;
 ViewportFn ResetMaterial;
 void** RenderInstance; // render_t::m_pcInstance
+void** RandyInstance;  // Randy_t::s_pcRandy: +8 set = the GUI uses a W-buffer (ZENABLE 2), else a Z-buffer (1)
 RenderFn RenderFan;
 using ReleaseFn = void(__thiscall*)(const void* self);
 ReleaseFn ReleaseTexture; // RTexture_t::ReleaseRTexture
@@ -186,17 +188,23 @@ constexpr int kVtableSlots = 64;           // View's vtable is shorter; only Ren
 
 // D3D7 render and texture stage states.
 enum : int {
-    RS_ZENABLE = 7, RS_ZWRITEENABLE = 14, RS_SRCBLEND = 19, RS_DESTBLEND = 20, RS_CULLMODE = 22,
+    RS_ZENABLE = 7, RS_ZWRITEENABLE = 14, RS_SRCBLEND = 19, RS_DESTBLEND = 20, RS_CULLMODE = 22, RS_ZFUNC = 23,
     RS_ALPHABLENDENABLE = 27, RS_FOGENABLE = 28, RS_LIGHTING = 137,
     TSS_COLOROP = 1, TSS_COLORARG1 = 2, TSS_COLORARG2 = 3, TSS_ALPHAOP = 4, TSS_ALPHAARG1 = 5, TSS_ALPHAARG2 = 6,
     TSS_ADDRESS = 12,
 };
 enum : unsigned {
-    BLEND_ZERO = 1, BLEND_SRCALPHA = 5, BLEND_INVSRCALPHA = 6, BLEND_DESTCOLOR = 9, CULL_NONE = 1,
+    BLEND_ZERO = 1, BLEND_SRCALPHA = 5, BLEND_INVSRCALPHA = 6, BLEND_DESTCOLOR = 9, CULL_NONE = 1, CMP_LESSEQUAL = 4,
     TOP_MODULATE = 4, TOP_MODULATE2X = 5, TOP_SELECTARG2 = 3, TA_DIFFUSE = 0, TA_TEXTURE = 2, TADDRESS_CLAMP = 3,
 };
 constexpr unsigned long kFvf = 0x144; // XYZRHW | DIFFUSE | TEX1, as the local map
-constexpr float kZ = 0.01f, kRhw = 100.0f;
+// Depth: the GUI draws every window's surfaces at z 0.01 (ViewArea_c::_UpdateVertices) with Z test LESS and
+// Z write on (ViewSurface_c::_CommitRendering), the top window first, so what's drawn first at a pixel stays.
+// The minimap draws right away in its view's Render: a hair behind (kZ) with LESSEQUAL and no Z write, so the
+// windows over it (drawn before it) cover it while its own layers still go over each other; then the GUI's
+// depth over its disc (DepthDisc), so the windows under it (drawn after) don't go over it.
+// rhw goes with z (1 / z, as the GUI's 100 with 0.01): with a W-buffer the depth compared is 1 / rhw.
+constexpr float kZ = 0.0101f, kGuiZ = 0.01f, kRhw = 1.0f / kZ, kGuiRhw = 100.0f;
 
 struct Vertex {
     float x, y, z, rhw;
@@ -241,6 +249,7 @@ bool ResolveAll()
     ok &= Resolve(ViewToScreen, gui, "?ConvertToScreen@View@@QBE?AVRect@@ABV2@_N@Z");
     ok &= Resolve(ViewRender, gui, "?Render@View@@UAEXPAVRViewPort_t@@MI@Z");
     ok &= Resolve(BlobCtor, randy, "??0StateBlob_c@@QAE@XZ");
+    Resolve(RandyInstance, randy, "?s_pcRandy@Randy_t@@1PAV1@A");
     ok &= Resolve(BlobSet, randy, "?Set@StateBlob_c@@QAEXXZ");
     ok &= Resolve(BlobReset, randy, "?Reset@StateBlob_c@@QAEXXZ");
     ok &= Resolve(BlobValidate, randy, "?Validate@StateBlob_c@@QAE_NXZ");
@@ -370,9 +379,11 @@ void SyncGameCompass(void* wc, bool hide)
     if (hide) {
         if (WindowIsVisible(compass))
             WindowShow(compass, false);
+        gui::MouseThrough(compass, true); // hidden, it still took the tooltips where it is
         g_hiddenCompass = compass;
     } else if (g_hiddenCompass == compass) {
         g_hiddenCompass = nullptr;
+        gui::MouseThrough(compass, false);
         if (CriteriaEvaluate && CriteriaEvaluate(static_cast<uint8_t*>(compass) + kCompassCriteria))
             WindowShow(compass, true);
     }
@@ -400,6 +411,7 @@ bool g_disabled = false;
 
 void* g_vtable[kVtableSlots]; // View's vtable with our Render
 void* g_flat = nullptr;     // untextured, alpha-blended
+void* g_depth = nullptr;    // the GUI's depth over the minimap (see kZ)
 void* g_textured = nullptr; // texture x diffuse (colour and alpha)
 void* g_rooms = nullptr;    // texture x diffuse x 2, as the game's map; alpha from the diffuse
 void* g_multiply = nullptr; // texture x what's there (the ground's textures over its lightmap)
@@ -417,7 +429,10 @@ void CommonStates(void* blob)
 {
     BlobSetRs(blob, RS_LIGHTING, 0);
     BlobSetRs(blob, RS_FOGENABLE, 0);
-    BlobSetRs(blob, RS_ZENABLE, 0);
+    // The GUI's depth mode (ViewSurface_c::_CommitRendering: 2, a W-buffer, when Randy_t +8 is set).
+    const uint8_t* randy = RandyInstance ? static_cast<const uint8_t*>(*RandyInstance) : nullptr;
+    BlobSetRs(blob, RS_ZENABLE, randy && randy[8] ? 2 : 1);
+    BlobSetRs(blob, RS_ZFUNC, CMP_LESSEQUAL);
     BlobSetRs(blob, RS_ZWRITEENABLE, 0);
     BlobSetRs(blob, RS_CULLMODE, CULL_NONE);
     BlobSetRs(blob, RS_ALPHABLENDENABLE, 1);
@@ -425,7 +440,7 @@ void CommonStates(void* blob)
     BlobSetRs(blob, RS_DESTBLEND, BLEND_INVSRCALPHA);
 }
 
-enum class Blob { Flat, Textured, Rooms, Multiply };
+enum class Blob { Flat, Textured, Rooms, Multiply, Depth };
 
 void* MakeBlob(Blob kind)
 {
@@ -435,7 +450,9 @@ void* MakeBlob(Blob kind)
     memset(blob, 0, kBlobAlloc);
     BlobCtor(blob);
     CommonStates(blob);
-    if (kind == Blob::Flat) {
+    if (kind == Blob::Depth) // writes the GUI's depth, draws nothing (alpha 0)
+        BlobSetRs(blob, RS_ZWRITEENABLE, 1);
+    if (kind == Blob::Flat || kind == Blob::Depth) {
         BlobSetTss(blob, 0, TSS_COLOROP, TOP_SELECTARG2);
         BlobSetTss(blob, 0, TSS_COLORARG2, TA_DIFFUSE);
         BlobSetTss(blob, 0, TSS_ALPHAOP, TOP_SELECTARG2);
@@ -605,6 +622,21 @@ Vertex V(float x, float y, uint32_t argb, float u = 0.0f, float v = 0.0f)
 {
     const uint32_t a = static_cast<uint32_t>((argb >> 24) * g_opacity + 0.5f);
     return Vertex{x, y, kZ, kRhw, (a << 24) | (argb & 0xFFFFFF), u, v};
+}
+
+// The GUI's depth over a disc, nothing drawn: the windows under the minimap, drawn after it, stay under it.
+void DepthDisc(void* viewport, float cx, float cy, float r)
+{
+    if (!Begin(viewport, g_depth, nullptr))
+        return;
+    Vertex v[kSegments + 2];
+    v[0] = Vertex{cx, cy, kGuiZ, kGuiRhw, 0, 0.0f, 0.0f};
+    for (int i = 0; i <= kSegments; ++i) {
+        const float a = 2.0f * kPi * i / kSegments;
+        v[i + 1] = Vertex{cx + std::cos(a) * r, cy + std::sin(a) * r, kGuiZ, kGuiRhw, 0, 0.0f, 0.0f};
+    }
+    RenderFan(*RenderInstance, kFvf, v, kSegments + 2, 0);
+    End(viewport, g_depth);
 }
 
 // A filled circle (the same kSegments-gon the map is clipped to).
@@ -2152,6 +2184,7 @@ void __fastcall Render(void* view, void* /*edx*/, void* viewport, float /*alpha*
         MissionMarker(viewport, cx, cy, r, wpAngle);
     if (n3)
         HeadingMarker(viewport, cx, cy, r, heading);
+    DepthDisc(viewport, cx, cy, r + kFramePx);
     ResetMaterial(viewport);
 }
 
@@ -2325,11 +2358,12 @@ void Update(HWND hwnd)
     }
     if (!g_flat) {
         g_flat = MakeBlob(Blob::Flat);
+        g_depth = MakeBlob(Blob::Depth);
         g_textured = MakeBlob(Blob::Textured);
         g_rooms = MakeBlob(Blob::Rooms);
         g_multiply = MakeBlob(Blob::Multiply);
         g_compass = MakeCompass();
-        if (!g_flat || !g_textured || !g_rooms || !g_multiply) {
+        if (!g_flat || !g_depth || !g_textured || !g_rooms || !g_multiply) {
             Log("[minimap] render states couldn't be made - minimap off");
             g_disabled = true;
             return;
@@ -2619,7 +2653,7 @@ bool Install()
         InstallHook("GUIModuleActivator_c map_window handler", toggle, &Hook_MapToggle, &g_origMapToggle);
     else
         Log("[minimap] the game's local map handler not found - its window is closed after it opens");
-    wndproc::Add(&OnMessage);
+    wndproc::Add(&OnMessage, "minimap");
     Log("[minimap] ready (MapData_c at %p)", static_cast<void*>(g_mapData));
     return true;
 }

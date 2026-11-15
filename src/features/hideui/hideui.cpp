@@ -132,7 +132,7 @@ bool Install()
     }
     const bool ok = g_spriteSystem && g_windowController && g_wcSpriteVtable;
     if (ok)
-        wndproc::Add(&OnMessage);
+        wndproc::Add(&OnMessage, "hide ui");
     Log("[ui] hide-interface key %s", ok ? "ready" : "unavailable: exports missing");
     return ok;
 }

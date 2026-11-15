@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Clarity VERSION 0.1.19 LANGUAGES C CXX)
+project(Clarity VERSION 0.1.20 LANGUAGES C CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "Anarchy Online is 32-bit: configure with -A Win32")
@@ -30,7 +30,9 @@ add_library(clarity SHARED
     src/proxy/dinput_proxy.cpp
     src/proxy/dinput.def
     src/core/config.cpp
+    src/core/frame_paint.cpp
     src/core/game.cpp
+    src/core/gui.cpp
     src/core/hooks.cpp
     src/core/log.cpp
     src/core/n3.cpp
@@ -47,6 +49,10 @@ add_library(clarity SHARED
     src/features/pfmap/pfmap.cpp
     src/features/minimap/minimap.cpp
     src/features/timers/timers.cpp
+    src/features/actionbars/ab_paint.cpp
+    src/features/actionbars/actionbars.cpp
+    src/features/buffs/buff_paint.cpp
+    src/features/buffs/buffs.cpp
     ${CMAKE_BINARY_DIR}/generated/clarity.rc
 )
 set_target_properties(clarity PROPERTIES OUTPUT_NAME dinput)
@@ -60,3 +66,16 @@ if(DEPLOY_DIR)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:clarity> "${DEPLOY_DIR}/dinput.dll"
         COMMENT "Deploying dinput.dll to ${DEPLOY_DIR}")
 endif()
+
+# Draws Clarity's painted parts (the action bars, the buff frame) to PNGs without the game, to look at before
+# testing in game:  clarity_preview.exe <out dir> [folder of the game's icon PNGs]
+add_executable(clarity_preview
+    tools/preview/preview.cpp
+    src/core/text_raster.cpp
+    src/core/frame_paint.cpp
+    src/features/actionbars/ab_paint.cpp
+    src/features/buffs/buff_paint.cpp
+)
+target_compile_definitions(clarity_preview PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+target_compile_options(clarity_preview PRIVATE /W4 /permissive- /utf-8)
+target_link_libraries(clarity_preview PRIVATE user32 gdi32 ole32 windowscodecs)

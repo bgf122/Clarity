@@ -9,8 +9,9 @@ namespace prk::wndproc {
 // Returns true to keep the message from the game, with *result as the procedure's answer.
 using Handler = bool (*)(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result);
 
-// Init thread, before Tick hooks the window. Handlers run in the order added.
-void Add(Handler handler);
+// Init thread, before Tick hooks the window. Handlers run in the order added; `name` labels a slow one in
+// the log (core/perf.h).
+void Add(Handler handler, const char* name);
 
 // Called periodically from the init thread: hooks the game window once it exists.
 void Tick();

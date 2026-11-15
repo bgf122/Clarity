@@ -321,7 +321,7 @@ bool Install()
     if (!InstallHook("TimerSystemModule_t::CreateTimer (GameTimerBar_c)", createGame, &Hook_CreateGame, &g_origCreateGame))
         return false;
     g_anchor = ConfigAnchor();
-    wndproc::Add(&OnMessage);
+    wndproc::Add(&OnMessage, "timers");
     Log("[timers] ready");
     return true;
 }

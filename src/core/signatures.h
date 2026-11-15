@@ -64,3 +64,16 @@
 // Positions the sprite at N3Msg_GetIndicatorPosition.
 // Client VA 0x10024D5B.
 #define SIG_NAMETAG_UPDATE "GUI.dll", "55 8B EC 83 EC 24 D9 EE 83 65 F4 00 83 65 F8 00 D9 55 E8 53 D9 55 EC 56"
+
+// GUI.dll: the key-binding manager's getter (client 0x10018B7C; the KeyBindings DValue's owner, "Provider"
+// hashes per input): mov eax,SEH / call / push ecx / mov eax,[g_bindings] / test eax,eax / jnz / push 0x28 (its
+// size) / call new. The global's address is at +12. The manager: +0x14 the head of a std::map<int input,
+// std::vector<uint32 provider>> (VS2010 tree nodes: left, parent, right, key +0x0C, vector +0x10/+0x14,
+// colour +0x1C, isnil +0x1D). A provider is boost hash_combine of a command name ("SHORTCUT_BAR_<bar>_<slot>",
+// "SHORTUCT_BAR_ACTIVE_<slot>"); an input is InputConfig_t's method id (0x6C..0x75 = 1..0) | 0x20000 shift,
+// 0x40000 ctrl, 0x80000 alt.
+#define SIG_KEYBIND_MANAGER "GUI.dll", "B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 51 A1 ?? ?? ?? ?? 85 C0 75 23 6A 28 E8"
+
+// GUI.dll: ShortcutBarView_c's row setter, void __thiscall(ShortcutBarView_c*, int row), ret 4: scrolls its
+// MultiListView_c (+0x1D8) to the row and sets the row spinner (+0x1D4, row at +0x130). Client VA 0x100D85FB.
+#define SIG_SHORTCUT_ROW "GUI.dll", "55 8B EC 83 EC 0C 53 56 57 8B F9 83 BF 2C 01 00 00 00 8B 8F D8 01 00 00 8B 99 A0 02 00 00"

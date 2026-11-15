@@ -8,6 +8,8 @@
 #include "features/bars/bars.h"
 #include "features/effects/effects.h"
 #include "features/minimap/minimap.h"
+#include "features/actionbars/actionbars.h"
+#include "features/buffs/buffs.h"
 #include "features/pfmap/pfmap.h"
 #include "features/fct/fct.h"
 #include "features/hideui/hideui.h"
@@ -64,6 +66,8 @@ DWORD WINAPI InitThread(void*)
         prk::bars::Install(); // (before the nameplates: a click on a panel isn't a click on a plate)
         prk::minimap::Install(); // (likewise)
         prk::timers::Install();  // (likewise)
+        prk::actionbars::Install(); // (likewise: a click on the frame's page control isn't a click on the world)
+        prk::buffs::Install();      // (likewise)
         prk::nameplates::Install();
         prk::hideui::Install();
         prk::effects::Install();

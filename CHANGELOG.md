@@ -2,6 +2,31 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.20
+
+### Action Bars (new)
+- **The game's shortcut bars in Clarity's look**, off by default: Options > Clarity > Action Bars.
+  - The first bars sit side by side in one frame, with your **XP and alien XP bars** across its top; the rest float on their own. The game's own XP bars are hidden while these are on.
+  - **Hotkeys** show on every slot.
+  - **Page controls** beside each bar in the frame: up goes to the next row. The **mouse wheel** works the same way over any bar.
+  - **Hide Empty Slots** keeps the bar tidy; every slot shows again while you drag something, so there's somewhere to drop it.
+  - Everything a slot does still works as in the game: drag and drop, use, cooldowns, tooltips.
+
+### Buff Frame (new)
+- **Your running nanos as icons** in place of the game's NCU window, off by default: Options > Clarity > Buffs.
+  - Buffs first, then debuffs on their own row, each sorted by time left, with the **time left** under every icon.
+  - **Borders in the game's colours** for each kind: self, team, friendly or hostile.
+  - **Hover** for the same text as the NCU window, and it counts down while you hover.
+  - **Right-click** a buff to cancel it. **Shift-click** any nano to open its description.
+  - Unlocked, drag it to move it and drag its corner to resize it. **Fill From the Right** and **Opacity** are on the Buffs page. The game's NCU button shows and hides it.
+
+### Smoother
+- **Less stutter when you change targets.** Nameplates are no longer drawn again from scratch each time the game rebuilds them, and the target frames only redraw the health bar when health changes.
+
+### Fixes
+- **Tooltips under hidden windows:** the game's compass (hidden by the minimap) and the game's own bars (hidden by Clarity's frames) kept every tooltip from showing where they would be. They no longer get in the way.
+- **Minimap:** no longer drawn over other windows.
+
 ## 0.1.19
 
 ### Frames

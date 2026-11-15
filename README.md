@@ -46,6 +46,20 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - The game's map button and key show and hide it, and its own local map window stays closed. The planet map still opens.
   - Settings: Enabled, Locked, Size and Opacity.
 
+- **Action bars** (off by default: Options > Clarity > Action Bars): the game's shortcut bars in Clarity's look.
+  - The game's options still decide how many bars there are, and every slot works as before: drag and drop, use, cooldowns, tooltips.
+  - The first bars (Bars in the frame: 1 to 4) sit side by side in one frame, with your XP and alien XP bars across its top. The other bars float on their own.
+  - Each slot shows its hotkey. Each bar in the frame has its own page control: the up arrow (or mouse wheel up) goes to the next row.
+  - The game's own XP bars are hidden while the action bars show XP.
+  - Settings: Enabled, Locked, Bars in the frame, Hide Empty Slots, Show Keys and Show XP Bars.
+
+- **Buff frame** (off by default: Options > Clarity > Buffs): your running nanos as icons in place of the game's NCU window.
+  - Buffs first, then debuffs on a new row, each sorted by time left. The time left is under each icon, and the icon empties as the game's NCU window shows it.
+  - Each icon's border has the colour the game gives its kind: self, team, friendly or hostile.
+  - Hover for the same text as the NCU window, counting down. Right-click a buff to cancel it, shift-click to open its description.
+  - Unlocked, drag it to move it and drag its corner to resize it. The game's NCU button shows and hides it.
+  - Settings: Enabled, Locked, Opacity and Fill From the Right.
+
 - **Movable timer bars** (off by default: untick **Timer Bars Locked** in Options > Clarity > Frames): drag the game's timer bars (attack, nano, perk, item...) where you want them. While they're unlocked, a gold bar shows where they start, so there's always something to drag. Lock them again once they're placed.
 
 - **Hide alien smoke** (Options > Clarity > Misc, on by default): the glowing smoke clouds under the alien ships (ICC Shuttleport, ICC Assembly Hall, Serenity Islands, the Superior Organization HQs and more) are very heavy on the graphics card and none of the game's options remove them. Switching it takes effect at once.
@@ -80,7 +94,9 @@ Open **Options → Clarity** in game, or edit `Clarity.ini` while the game runs:
 - `[Nameplates]`: on/off, style, sizes, opacity, overlapping, which plates (players, NPCs, pets), and the Modern style's options;
 - `[Bars]`: the frames: on/off, locked, size, and where each frame is; the timer bars: locked and where they are;
 - `[Effects]`: hiding the alien smoke, other scenery effects by id, and the alien mission map's green rooms;
-- `[Minimap]`: on/off, locked, shown, size, opacity, zoom, layer, the planet map's level, and where it is.
+- `[Minimap]`: on/off, locked, shown, size, opacity, zoom, layer, the planet map's level, and where it is;
+- `[ActionBars]`: on/off, locked, how many bars sit in the frame, hiding empty slots, hotkeys, XP bars, and where the frame is;
+- `[Buffs]`: on/off, locked, shown, opacity, direction, and where the frame is and how big.
 
 If something looks wrong, set `Debug=1` under `[FloatingText]` and include `Clarity.log` in your report.
 

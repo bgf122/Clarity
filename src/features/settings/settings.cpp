@@ -21,7 +21,7 @@ namespace {
 // --- the settings shown on the page -------------------------------------------------------
 
 // The Clarity tab's pages.
-constexpr int kPageFct = 0, kPageNameplates = 1, kPageBars = 2, kPageMisc = 3, kPageMinimap = 4, kPageCount = 5;
+constexpr int kPageFct = 0, kPageNameplates = 1, kPageBars = 2, kPageMisc = 3, kPageMinimap = 4, kPageActionBars = 5, kPageBuffs = 6, kPageCount = 7;
 
 struct Item {
     const char* var;       // DValue name
@@ -45,17 +45,21 @@ struct Item {
     bool EffectsConfig::*efBool = nullptr; // Misc page
     bool MinimapConfig::*mmBool = nullptr; // Minimap page
     float MinimapConfig::*mmFloat = nullptr;
+    bool ActionBarsConfig::*abBool = nullptr; // Action Bars page
+    int ActionBarsConfig::*abInt = nullptr;   // (a slider, rounded)
+    bool BuffsConfig::*bfBool = nullptr;      // Buffs page
+    float BuffsConfig::*bfFloat = nullptr;
 
     const wchar_t* IniSection() const
     {
         if (group >= 0)
             return L"CombatLog";
-        static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars", L"Effects", L"Minimap"};
+        static const wchar_t* const kSections[kPageCount] = {L"FloatingText", L"Nameplates", L"Bars", L"Effects", L"Minimap", L"ActionBars", L"Buffs"};
         return kSections[Page()];
     }
     int Page() const
     {
-        return (mmBool || mmFloat) ? kPageMinimap : efBool ? kPageMisc : (brBool || brFloat) ? kPageBars : (npBool || npFloat || npInt) ? kPageNameplates : kPageFct;
+        return (bfBool || bfFloat) ? kPageBuffs : (abBool || abInt) ? kPageActionBars : (mmBool || mmFloat) ? kPageMinimap : efBool ? kPageMisc : (brBool || brFloat) ? kPageBars : (npBool || npFloat || npInt) ? kPageNameplates : kPageFct;
     }
     double Current() const { return Value(Cfg()); }
     double Default() const
@@ -87,6 +91,14 @@ struct Item {
             return c.minimap.*mmBool ? 1.0 : 0.0;
         if (mmFloat)
             return c.minimap.*mmFloat;
+        if (abBool)
+            return c.actionBars.*abBool ? 1.0 : 0.0;
+        if (abInt)
+            return c.actionBars.*abInt;
+        if (bfBool)
+            return c.buffs.*bfBool ? 1.0 : 0.0;
+        if (bfFloat)
+            return c.buffs.*bfFloat;
         return c.bars.*brFloat;
     }
 };
@@ -107,6 +119,12 @@ struct Item {
 // Minimap page: the field goes last.
 #define MB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, &MinimapConfig::field
 #define MF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, nullptr, &MinimapConfig::field
+// Action Bars page: the field goes last.
+#define AB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, nullptr, nullptr, &ActionBarsConfig::field
+#define AI(field, lo, hi, fmt) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, 1, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, nullptr, nullptr, nullptr, &ActionBarsConfig::field
+// Buffs page: the field goes last.
+#define FB(field) true, nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr, 1, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, nullptr, nullptr, nullptr, nullptr, &BuffsConfig::field
+#define FF(field, lo, hi, fmt, scale) false, nullptr, nullptr, nullptr, nullptr, lo, hi, fmt, scale, nullptr, -1, nullptr, nullptr, nullptr, nullptr, false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &BuffsConfig::field
 
 const char* const kNpStyles[] = {"Classic", "Modern", nullptr};
 const char* const kBarStyles[] = {"Level", "Health", nullptr};
@@ -185,6 +203,18 @@ const Item kItems[] = {
     {"CLR_MmLocked", L"Locked", "Locked", MB(locked)},
     {"CLR_MmSize", L"Size", "Size:", MF(size, 120, 400, "%.0f px", 1)},
     {"CLR_MmOpacity", L"Opacity", "Opacity:", MF(opacity, 0.2, 1, "%.0f%%", 100)},
+
+    {"CLR_AbEnable", L"Enable", "Enabled", AB(enable)},
+    {"CLR_AbLocked", L"Locked", "Locked", AB(locked)},
+    {"CLR_AbDocked", L"Docked", "Bars in the frame:", AI(docked, 1, 4, "%.0f")},
+    {"CLR_AbHideEmpty", L"HideEmpty", "Hide Empty Slots", AB(hideEmpty)},
+    {"CLR_AbShowKeys", L"ShowKeys", "Show Keys", AB(showKeys)},
+    {"CLR_AbShowXp", L"ShowXP", "Show XP Bars", AB(showXp)},
+
+    {"CLR_BfEnable", L"Enable", "Enabled", FB(enable)},
+    {"CLR_BfLocked", L"Locked", "Locked", FB(locked)},
+    {"CLR_BfOpacity", L"Opacity", "Opacity:", FF(opacity, 0.2, 1, "%.0f%%", 100)},
+    {"CLR_BfRightToLeft", L"RightToLeft", "Fill From the Right", FB(rightToLeft)},
 };
 constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 
@@ -200,6 +230,10 @@ constexpr int kItemCount = sizeof(kItems) / sizeof(kItems[0]);
 #undef EB
 #undef MB
 #undef MF
+#undef AB
+#undef AI
+#undef FB
+#undef FF
 
 // Latest value per item from the GUI, written to the INI by Flush() on the init thread.
 std::atomic<bool> g_dirty[kItemCount];
@@ -209,8 +243,8 @@ std::atomic<double> g_value[kItemCount];
 // puts the page's settings back to their defaults; changing any of them switches it to Custom.
 constexpr int kPresetDefault = 0, kPresetCustom = 1;
 // (Only the Floating Combat Text page has one.)
-const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", nullptr, nullptr, nullptr, nullptr};
-const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames", "misc", "minimap"};
+const char* const kPresetVars[kPageCount] = {"CLR_PresetFct", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+const char* const kPageNames[kPageCount] = {"floating text", "nameplates", "frames", "misc", "minimap", "action bars", "buffs"};
 const char* const kPresetChoices[] = {"Default", "Custom", nullptr};
 std::atomic<bool> g_resetPage[kPageCount];  // Default chosen: Flush() resets the page
 std::atomic<bool> g_customPage[kPageCount]; // a setting changed: Flush() shows Custom
@@ -573,6 +607,8 @@ std::string TabXml()
     AppendPage(x, "Nameplates", "clarity_np_scroll", kPageNameplates);
     AppendPage(x, "Frames", "clarity_bars_scroll", kPageBars);
     AppendPage(x, "Minimap", "clarity_minimap_scroll", kPageMinimap);
+    AppendPage(x, "Action Bars", "clarity_actionbars_scroll", kPageActionBars);
+    AppendPage(x, "Buffs", "clarity_buffs_scroll", kPageBuffs);
     AppendPage(x, "Misc", "clarity_misc_scroll", kPageMisc);
     return x;
 }

@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -226,7 +227,46 @@ const char kDefaultIni[] =
     "PlanetLevel=-1\n"
     "; Where it is (saved when you drag it); -1 = the top-right corner\n"
     "X=-1\n"
-    "Y=-1\n";
+    "Y=-1\n"
+    "\n"
+    "[ActionBars]\n"
+    "; 1 = Clarity's action bars: the game's shortcut bars in Clarity's style (the game's options set how many)\n"
+    "Enable=0\n"
+    "; 1 = the frame can't be dragged and the floating bars' own handles are hidden\n"
+    "Locked=1\n"
+    "; How many of the first shortcut bars sit in the frame (1-4); the rest float\n"
+    "Docked=2\n"
+    "; 1 = empty slots show nothing (you can still drop on them)\n"
+    "HideEmpty=0\n"
+    "; 1 = each slot shows its key\n"
+    "ShowKeys=1\n"
+    "; 1 = the XP and alien XP bars along the bottom of the frame\n"
+    "ShowXP=1\n"
+    "; Where the frame is (saved when you drag it); -1 = bottom centre\n"
+    "X=-1\n"
+    "Y=-1\n"
+    "; 1 = log the bars and their slots' keys\n"
+    "Debug=0\n"
+    "\n"
+    "[Buffs]\n"
+    "; 1 = your running nanos as icons with the time left, in place of the game's NCU window (its button\n"
+    "; and key show and hide this instead). Right-click a buff to cancel it.\n"
+    "Enable=0\n"
+    "; 1 = it can't be moved or resized; 0 = drag it to move it, its bottom-right corner to resize it\n"
+    "Locked=0\n"
+    "; 1 = shown, 0 = hidden (the game's NCU button and key switch it; the same for every character)\n"
+    "Shown=1\n"
+    "; Opacity (0.2-1); the icons are the game's own size (scaled, they look bad)\n"
+    "Opacity=1\n"
+    "; 1 = the icons fill from the top right, as WoW's; 0 = from the top left\n"
+    "RightToLeft=0\n"
+    "; Where it is and its size (saved when you drag or resize it); -1 = the default\n"
+    "X=-1\n"
+    "Y=-1\n"
+    "W=-1\n"
+    "H=-1\n"
+    "; 1 = log the nanos read\n"
+    "Debug=0\n";
 
 // "Ctrl+Shift+U", "Alt+F12", "Ctrl+7": modifiers and one key; vk 0 if not understood.
 Hotkey ParseHotkey(const wchar_t* text)
@@ -512,6 +552,35 @@ void LoadConfig()
         m.zoom = std::clamp(ReadFloat(p, L"Minimap", L"Zoom", dm.zoom), 0.75f, 1.5f);
         m.x = ReadFloat(p, L"Minimap", L"X", dm.x);
         m.y = ReadFloat(p, L"Minimap", L"Y", dm.y);
+    }
+
+    {
+        ActionBarsConfig& a = g_bufs[next].actionBars;
+        const ActionBarsConfig da;
+        a.enable = ReadFloat(p, L"ActionBars", L"Enable", da.enable) != 0.0f;
+        a.locked = ReadFloat(p, L"ActionBars", L"Locked", da.locked) != 0.0f;
+        a.docked = std::clamp(static_cast<int>(std::lround(ReadFloat(p, L"ActionBars", L"Docked", static_cast<float>(da.docked)))), 1, 4);
+        a.hideEmpty = ReadFloat(p, L"ActionBars", L"HideEmpty", da.hideEmpty) != 0.0f;
+        a.showKeys = ReadFloat(p, L"ActionBars", L"ShowKeys", da.showKeys) != 0.0f;
+        a.showXp = ReadFloat(p, L"ActionBars", L"ShowXP", da.showXp) != 0.0f;
+        a.x = ReadFloat(p, L"ActionBars", L"X", da.x);
+        a.y = ReadFloat(p, L"ActionBars", L"Y", da.y);
+        a.debug = ReadFloat(p, L"ActionBars", L"Debug", da.debug) != 0.0f;
+    }
+
+    {
+        BuffsConfig& b = g_bufs[next].buffs;
+        const BuffsConfig db;
+        b.enable = ReadFloat(p, L"Buffs", L"Enable", db.enable) != 0.0f;
+        b.locked = ReadFloat(p, L"Buffs", L"Locked", db.locked) != 0.0f;
+        b.shown = ReadFloat(p, L"Buffs", L"Shown", db.shown) != 0.0f;
+        b.opacity = std::clamp(ReadFloat(p, L"Buffs", L"Opacity", db.opacity), 0.2f, 1.0f);
+        b.rightToLeft = ReadFloat(p, L"Buffs", L"RightToLeft", db.rightToLeft) != 0.0f;
+        b.x = ReadFloat(p, L"Buffs", L"X", db.x);
+        b.y = ReadFloat(p, L"Buffs", L"Y", db.y);
+        b.w = ReadFloat(p, L"Buffs", L"W", db.w);
+        b.h = ReadFloat(p, L"Buffs", L"H", db.h);
+        b.debug = ReadFloat(p, L"Buffs", L"Debug", db.debug) != 0.0f;
     }
 
     g_cur.store(next, std::memory_order_release);

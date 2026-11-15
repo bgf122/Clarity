@@ -10,6 +10,7 @@
 
 #include "../../core/config.h"
 #include "../../core/game.h"
+#include "../../core/perf.h"
 #include "../../core/hooks.h"
 #include "../../core/log.h"
 #include "../../core/n3.h"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <list>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -128,6 +130,11 @@ struct Plate {
     DWORD sightFadeTick = 0;
     Vertex origVerts[4] = {}; // the game's quad, restored when modern plates are turned off
     float origHalfW = 0.0f, origHalfH = 0.0f;
+    // The texels with content (text, band, bar, level), and what has been sent: after the first whole
+    // texture, a new render sends only where the old or the new content is.
+    RECT content{};
+    RECT sentContent{};
+    bool sent = false;
 };
 
 using BuildFn = void(__thiscall*)(uint8_t* ind);
@@ -718,8 +725,9 @@ uint32_t GlossRgb(uint32_t rgb, float t)
 // when it's both); "attacking you" is a red band right on the rim, blinked by Repaint. The org line
 // is under the frame. Every plate keeps room for the band, so a plate doesn't move when it starts
 // being attacked.
-void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
+void RenderUncached(Plate& p, const game::Identity& id, uint8_t* ind)
 {
+    perf::Slow slow("nameplate text", static_cast<unsigned>(id.instance));
     if (Cfg().np.style == kStyleModern) {
         RenderModern(p, id, ind);
         return;
@@ -833,6 +841,138 @@ void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
     p.nameCap = std::max(1.0f, cap);
     p.hpPct = -1;
     p.barRgb = 0;
+}
+
+RECT BarArea(const Plate& p);
+RECT LevelArea(const Plate& p);
+RECT BracketArea(const Plate& p);
+RECT Union(const RECT& a, const RECT& b);
+
+// --- finished renders, kept ---------------------------------------------------------------------
+// A target change makes the game build new Indicators (selected / fight target) and build some again
+// several times; each was a whole render (10-25 ms: the frame, the text through GDI, its shadow), and a
+// few of them in a row were a visible hitch. The same inputs give the same texture, so finished renders
+// are kept by what goes into them.
+struct Rendered {
+    std::string key;
+    RECT box{};               // the texels with anything in the text layer
+    std::vector<uint32_t> px; // those texels, row by row
+    bool modern = false;
+    std::wstring level;
+    float levelX = 0.0f, levelY = 0.0f;
+    int barY = -1, barW = 0, barH = 0, barBorder = 0;
+    raster::Mask atkFill, atkOutline;
+    int atkX = 0, atkY = 0;
+    int anchorRow = kTexH;
+    float hitHalfW = 0.0f, visTop = 0.0f, visBottom = 0.0f, nameCap = 30.0f;
+};
+std::list<Rendered> g_rendered; // most recently used first
+constexpr size_t kRenderedMax = 16;
+
+// Everything a render depends on (the settings through g_version).
+std::string RenderKey(const Plate& p, const game::Identity& id, uint8_t* ind)
+{
+    const NameplateConfig& cfg = Cfg().np;
+    const bool modern = cfg.style == kStyleModern;
+    const bool corpse = id.type != kTypeCharacter;
+    std::string k;
+    k.reserve(160);
+    char head[96];
+    const int life = corpse ? 0 : n3::GetSkill(id, n3::kStatLife);
+    const int level = corpse ? 0 : n3::GetSkill(id, n3::kStatLevel);
+    sprintf_s(head, "%u|%d|%d|%d|%d|%d|%d|%d|", g_version.load(), cfg.style, corpse ? 1 : 0, static_cast<int>(p.role), p.alsoFight ? 1 : 0,
+              life > 0 && life != n3::kNoValue ? 1 : 0, level, n3::GetSkill(id, n3::kStatSide));
+    k = head;
+    for (const TextRun& r : NameRuns(id, ind, modern ? cfg.showOrg : true)) {
+        sprintf_s(head, "%06X:", r.rgb);
+        k += head;
+        k.append(reinterpret_cast<const char*>(r.text.data()), r.text.size() * sizeof(wchar_t));
+        k += '|';
+    }
+    k += n3::Org(id);
+    return k;
+}
+
+// The texels with content: the text layer's visible pixels, and what Repaint adds over it.
+RECT ContentOf(const Plate& p)
+{
+    RECT r{kTexW, kTexH, 0, 0};
+    for (int y = 0; y < kTexH; ++y) {
+        const uint32_t* row = p.text.data() + static_cast<size_t>(y) * kTexW;
+        for (int x = 0; x < kTexW; ++x) {
+            if (!(row[x] >> 24))
+                continue;
+            r.left = std::min<LONG>(r.left, x);
+            r.right = std::max<LONG>(r.right, x + 1);
+            r.top = std::min<LONG>(r.top, y);
+            r.bottom = std::max<LONG>(r.bottom, y + 1);
+        }
+    }
+    if (r.right <= r.left)
+        r = {};
+    return Union(Union(r, BracketArea(p)), Union(BarArea(p), LevelArea(p)));
+}
+
+void RenderText(Plate& p, const game::Identity& id, uint8_t* ind)
+{
+    const std::string key = RenderKey(p, id, ind);
+    for (auto it = g_rendered.begin(); it != g_rendered.end(); ++it) {
+        if (it->key != key)
+            continue;
+        g_rendered.splice(g_rendered.begin(), g_rendered, it); // most recently used
+        const Rendered& r = g_rendered.front();
+        p.text.assign(static_cast<size_t>(kTexW) * kTexH, 0);
+        const int bw = r.box.right - r.box.left;
+        for (int y = r.box.top; y < r.box.bottom; ++y)
+            std::copy_n(r.px.begin() + static_cast<size_t>(y - r.box.top) * bw, bw, p.text.begin() + static_cast<size_t>(y) * kTexW + r.box.left);
+        p.modern = r.modern;
+        p.level = r.level;
+        p.levelX = r.levelX, p.levelY = r.levelY;
+        p.barY = r.barY, p.barW = r.barW, p.barH = r.barH, p.barBorder = r.barBorder;
+        p.atkFill = r.atkFill, p.atkOutline = r.atkOutline;
+        p.atkX = r.atkX, p.atkY = r.atkY;
+        p.anchorRow = r.anchorRow;
+        p.hitHalfW = r.hitHalfW, p.visTop = r.visTop, p.visBottom = r.visBottom, p.nameCap = r.nameCap;
+        p.hpPct = -1;
+        p.barRgb = 0;
+        p.content = ContentOf(p);
+        return;
+    }
+    RenderUncached(p, id, ind);
+    p.content = ContentOf(p);
+    Rendered r;
+    r.key = key;
+    for (int y = 0; y < kTexH; ++y) { // the text layer's own box (ContentOf adds the bar and band)
+        const uint32_t* row = p.text.data() + static_cast<size_t>(y) * kTexW;
+        for (int x = 0; x < kTexW; ++x) {
+            if (!(row[x] >> 24))
+                continue;
+            if (r.box.right <= r.box.left) {
+                r.box = {x, y, x + 1, y + 1};
+            } else {
+                r.box.left = std::min<LONG>(r.box.left, x);
+                r.box.right = std::max<LONG>(r.box.right, x + 1);
+                r.box.top = std::min<LONG>(r.box.top, y);
+                r.box.bottom = std::max<LONG>(r.box.bottom, y + 1);
+            }
+        }
+    }
+    const int bw = r.box.right - r.box.left;
+    r.px.reserve(static_cast<size_t>(std::max(0, bw)) * std::max<LONG>(0, r.box.bottom - r.box.top));
+    for (int y = r.box.top; y < r.box.bottom; ++y)
+        r.px.insert(r.px.end(), p.text.begin() + static_cast<size_t>(y) * kTexW + r.box.left,
+                    p.text.begin() + static_cast<size_t>(y) * kTexW + r.box.right);
+    r.modern = p.modern;
+    r.level = p.level;
+    r.levelX = p.levelX, r.levelY = p.levelY;
+    r.barY = p.barY, r.barW = p.barW, r.barH = p.barH, r.barBorder = p.barBorder;
+    r.atkFill = p.atkFill, r.atkOutline = p.atkOutline;
+    r.atkX = p.atkX, r.atkY = p.atkY;
+    r.anchorRow = p.anchorRow;
+    r.hitHalfW = p.hitHalfW, r.visTop = p.visTop, r.visBottom = p.visBottom, r.nameCap = p.nameCap;
+    g_rendered.push_front(std::move(r));
+    if (g_rendered.size() > kRenderedMax)
+        g_rendered.pop_back();
 }
 
 // Within the texture and, if given, within clip.
@@ -969,6 +1109,7 @@ RECT BracketArea(const Plate& p)
 // percentage inside.
 void Repaint(Plate& p, RECT area)
 {
+    perf::Slow slow("nameplate repaint", static_cast<unsigned>((area.right - area.left) * (area.bottom - area.top)));
     area = ClipRect(&area);
     if (area.right <= area.left || area.bottom <= area.top)
         return;
@@ -1017,7 +1158,11 @@ void Upload(Plate& p, int tenths, uint32_t barRgb, bool full)
     p.barRgb = barRgb;
     if (full || p.px.size() != p.text.size()) {
         p.px = p.text;
-        Repaint(p, RECT{0, 0, kTexW, kTexH});
+        // The whole texture the first time (what's in a new one is unknown); after that only where the
+        // last content or the new is - everything else is clear in both.
+        Repaint(p, p.sent ? Union(p.sentContent, p.content) : RECT{0, 0, kTexW, kTexH});
+        p.sent = true;
+        p.sentContent = p.content;
         return;
     }
     Repaint(p, Union(BarArea(p), LevelArea(p)));
@@ -1231,10 +1376,58 @@ void __fastcall Hook_Vicinity(void* self, void* /*edx*/, void* list, bool includ
     g_nextVicinity(self, list, includeSelf, all, type);
 }
 
+// Textures of deleted plates, kept for the next ones: a target change deletes and makes Indicators, and a
+// new texture has to be sent whole (4-6 ms); a kept one holds what it showed last (px, sentContent), so a
+// new plate on it sends only where that or its own content is.
+struct Spare {
+    void* vm;
+    std::vector<uint32_t> px;
+    RECT sentContent;
+    bool sent;
+};
+std::vector<Spare> g_spares;
+constexpr size_t kMaxSpares = 8;
+
+void KeepOrDestroy(Plate& p)
+{
+    if (!p.vm)
+        return;
+    if (g_spares.size() < kMaxSpares && Cfg().np.enable) {
+        g_spares.push_back({p.vm, std::move(p.px), p.sentContent, p.sent});
+    } else {
+        game::DestroyVisualMaterial(p.vm);
+    }
+    p.vm = nullptr;
+}
+
+// A texture for a new plate: a kept one, else a new one.
+bool TakeTexture(Plate& p)
+{
+    if (!g_spares.empty()) {
+        Spare& s = g_spares.back();
+        p.vm = s.vm;
+        p.px = std::move(s.px);
+        p.sentContent = s.sentContent;
+        p.sent = s.sent;
+        g_spares.pop_back();
+        return true;
+    }
+    p.vm = game::CreateVisualMaterial(kTexW, kTexH, "Clarity nameplate");
+    p.sent = false;
+    return p.vm != nullptr;
+}
+
+void DropSpares()
+{
+    for (Spare& s : g_spares)
+        game::DestroyVisualMaterial(s.vm);
+    g_spares.clear();
+}
+
 void* __fastcall Hook_Delete(void* self, void* /*edx*/, unsigned flags)
 {
     auto it = g_plates.find(static_cast<uint8_t*>(self));
-    void* vm = it != g_plates.end() ? it->second.vm : nullptr;
+    Plate gonePlate;
     if (it != g_plates.end()) {
         const DWORD now = GetTickCount();
         if (g_lastPlate.size() > 256) {
@@ -1246,10 +1439,11 @@ void* __fastcall Hook_Delete(void* self, void* /*edx*/, unsigned flags)
                                      gone.screenTick != 0 && now - gone.screenTick < 250};
         if (it->second.role != Role::Normal)
             ForceRescan();
+        gonePlate = std::move(it->second);
         g_plates.erase(it);
     }
     void* r = g_origDelete(self, flags); // releases the sprite (and its reference to our material)
-    game::DestroyVisualMaterial(vm);
+    KeepOrDestroy(gonePlate);             // ours: kept for the next plate, or freed
     return r;
 }
 
@@ -1323,8 +1517,7 @@ void Build(uint8_t* ind)
     const game::Identity id = Field<game::Identity>(ind, kIndIdentity);
     Plate& p = g_plates[ind];
     if (!p.vm) {
-        p.vm = game::CreateVisualMaterial(kTexW, kTexH, "Clarity nameplate");
-        if (!p.vm) {
+        if (!TakeTexture(p)) {
             g_plates.erase(ind);
             g_buildFailed = true;
             Log("[np] couldn't create a nameplate texture - leaving the game's tags");
@@ -1461,6 +1654,7 @@ int __fastcall Hook_Update(uint8_t* ind)
     }
     auto it = g_plates.find(ind);
     if (!cfg.enable) {
+        DropSpares();
         if (it != g_plates.end())
             Restore(ind, it);
         return keep;
@@ -1841,7 +2035,7 @@ bool Install()
         if (!g_setTarget || !g_windowController || !g_getMouseWindow)
             Log("[np] click-to-target exports missing - disabled");
         else
-            wndproc::Add(&HandleClick);
+            wndproc::Add(&HandleClick, "nameplate clicks");
 
         g_handleNametags = reinterpret_cast<uint8_t*>(GetProcAddress(gui, "?HandleNametags@TargetingModule_t@@AAEXXZ"));
         void** slot = FindImportSlot(gui, "?N3Msg_GetDynelsInVicinity@");

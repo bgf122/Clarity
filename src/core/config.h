@@ -175,6 +175,32 @@ struct MinimapConfig {
     float x = -1.0f, y = -1.0f; // the window's top-left (GUI units), saved when dragged; -1 = the top-right corner
 };
 
+// Action bars ([ActionBars]): the game's shortcut bars restyled. The first ones sit in a Clarity frame
+// with the XP bars; the rest float where the game has them. The game's options set how many there are.
+struct ActionBarsConfig {
+    bool enable = false;
+    bool locked = true;      // the dock can't be dragged, and the floating bars' handles are hidden
+    int docked = 2;          // the first shortcut bars in the frame (1-4)
+    bool hideEmpty = false;  // empty slots show nothing (they still take a drop)
+    bool showKeys = true;    // each slot's key, top right
+    bool showXp = true;      // the XP and alien XP bars along the frame's bottom
+    float x = -1.0f, y = -1.0f; // the frame's top-left (GUI units), saved when dragged; -1 = bottom centre
+    bool debug = false;      // log the bars found and their slots' keys
+};
+
+// The buff frame ([Buffs]): your running nanos as icons with the time left, in place of the game's NCU window
+// (its button and key show and hide this instead).
+struct BuffsConfig {
+    bool enable = false;
+    bool locked = false;     // unlocked: drag to move, the corner to resize
+    bool shown = true;       // shown or hidden (the game's NCU button / key switches; the same for every character)
+    float opacity = 1.0f;    // 0.2-1
+    bool rightToLeft = false; // the icons fill from the top right (as WoW's), else from the top left
+    float x = -1.0f, y = -1.0f; // top-left (GUI units), saved when dragged; -1 = the upper middle of the screen
+    float w = -1.0f, h = -1.0f; // size (pixels), saved when resized; -1 = 10 icons wide, 3 rows
+    bool debug = false;
+};
+
 struct Config {
     FctConfig fct;
     NameplateConfig np;
@@ -182,6 +208,8 @@ struct Config {
     InterfaceConfig ui;
     EffectsConfig effects;
     MinimapConfig minimap;
+    ActionBarsConfig actionBars;
+    BuffsConfig buffs;
 };
 
 // Current settings. Written only by LoadConfig (init thread); read by the game thread.

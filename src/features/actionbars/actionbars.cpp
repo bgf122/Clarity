@@ -262,6 +262,7 @@ struct Bar {
 
     gui::Surface back{"floating bar's slots", kTex, 256, kBackFlags};
     gui::Surface keys{"key labels", kTex, 256, kKeysFlags}; // nesting: g_labelNesting (see gui::Surface)
+    bool texVertical = false; // back and keys have upright textures (256 x kTex), for a vertical bar
     bool seen = false;
 };
 
@@ -688,6 +689,24 @@ void SyncGameXp(void* wc, bool hide)
     g_hiddenGameXp.swap(hidden);
 }
 
+// The bar's own windows' textures the bar's way round: kTex along it, 256 across (a vertical bar of 10 cells
+// is taller than 256: in a wide texture it was cut off after 6 slots). Turned round, they're made again (the
+// GUI has no way to delete a window: the old ones stay hidden).
+void FitTextures(Bar& b)
+{
+    if (b.texVertical == b.vertical)
+        return;
+    b.texVertical = b.vertical;
+    for (gui::Surface* s : {&b.back, &b.keys}) {
+        if (s->window) {
+            gui::Show(*s, false);
+            gui::Forget(*s);
+        }
+        s->texW = b.vertical ? 256 : kTex;
+        s->texH = b.vertical ? kTex : 256;
+    }
+}
+
 void PresentKeys(void* wc, Bar& b, float k, bool show)
 {
     const ActionBarsConfig& cfg = Cfg().actionBars;
@@ -878,6 +897,7 @@ void Update(HWND hwnd)
             continue;
         const bool shown = gui::WindowVisible(b->window);
         Style(*b, b->docked || cfg.locked);
+        FitTextures(*b);
         PresentBack(*b, k, shown && !b->docked, hideEmpty);
         PresentKeys(wc, *b, k, shown);
     }

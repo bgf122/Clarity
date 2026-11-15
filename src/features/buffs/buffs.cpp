@@ -216,6 +216,7 @@ struct Cell {
     gui::Rect source{};      // the whole texture (both halves)
     int fill = -1;           // pixels of the icon in the normal half (what's drawn now)
     int icon = 0;
+    bool rdbIcon = false;
     bool shown = false;
     gui::Rect frame{};
     game::Identity id{};
@@ -469,29 +470,29 @@ void Update(HWND hwnd)
                 cell.frame = frame;
                 cell.fill = -1; // its size may have changed: the halves are placed again
             }
-            if (cell.icon != n.icon || !cell.image) {
+            if (cell.icon != n.icon || cell.rdbIcon != n.rdbIcon || !cell.image) {
                 gui::DestroyImage(cell.view, cell.image);
                 gui::DestroyImage(cell.view, cell.dimmed);
                 cell.image = gui::LoadImage(n.icon, n.rdbIcon);
                 cell.dimmed = nullptr;
                 cell.icon = n.icon;
+                cell.rdbIcon = n.rdbIcon;
                 cell.fill = -1;
                 if (cell.image) {
                     gui::AttachImage(cell.view, cell.image, gui::Rect{0.0f, 0.0f, s - 1.0f, sh - 1.0f});
                     cell.source = gui::ImageSource(cell.image);
                     if (g_iconW == 0) {
                         const float tw = cell.source.right - cell.source.left + 1.0f, th = cell.source.bottom - cell.source.top + 1.0f;
-                        g_iconW = static_cast<int>(std::lround(n.rdbIcon && tw >= th * 1.5f ? std::floor(tw * 0.5f) : tw));
+                        g_iconW = static_cast<int>(std::lround(std::floor(tw * 0.5f)));
                         g_iconH = static_cast<int>(std::lround(th));
                         if (cfg.debug)
                             Log("[buffs] the game's icons are %dx%d (texture %.0fx%.0f)", g_iconW, g_iconH, tw, th);
                     }
-                    const float tw = cell.source.right - cell.source.left + 1.0f, th = cell.source.bottom - cell.source.top + 1.0f;
-                    if (n.rdbIcon && tw >= th * 1.5f) { // the two halves: the dimmed one too
-                        cell.dimmed = gui::LoadImage(n.icon, true);
-                        if (cell.dimmed)
-                            gui::AttachImage(cell.view, cell.dimmed, gui::Rect{0.0f, 0.0f, s - 1.0f, sh - 1.0f});
-                    }
+                    // A nano's icon is always two halves, the default one (GUI image 0xB7) too: the NCU window
+                    // splits every nano's (ItemIconView_c 0x1003FA39 clones the surface for a nano whatever it is).
+                    cell.dimmed = gui::LoadImage(n.icon, n.rdbIcon);
+                    if (cell.dimmed)
+                        gui::AttachImage(cell.view, cell.dimmed, gui::Rect{0.0f, 0.0f, s - 1.0f, sh - 1.0f});
                 }
             }
             // The time left as the NCU window shows it (ItemIconView_c GUI 0x1003EFE6): the normal half from the
@@ -499,7 +500,7 @@ void Update(HWND hwnd)
             if (cell.image) {
                 const gui::Rect& src = cell.source;
                 const float tw = src.right - src.left + 1.0f;
-                const float half = cell.dimmed ? std::floor(tw * 0.5f) : tw;
+                const float half = std::floor(tw * 0.5f); // the normal half, even if the dimmed copy didn't load
                 const float f = n.total > 0 && n.left > 0 ? std::clamp(static_cast<float>(n.left) / n.total, 0.0f, 1.0f) : 1.0f;
                 const int fill = cell.dimmed ? static_cast<int>(std::floor(s * f)) : static_cast<int>(s);
                 if (fill != cell.fill) {

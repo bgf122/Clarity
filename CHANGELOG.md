@@ -2,6 +2,12 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.21
+
+### Fixes
+- **Action Bars:** a vertical bar is shown whole again; its slots and hotkeys stopped after the sixth slot.
+- **Buff Frame:** debuffs with the game's default nano icon showed it twice side by side; they now show it once, with the time left, like every other nano.
+
 ## 0.1.20
 
 ### Action Bars (new)

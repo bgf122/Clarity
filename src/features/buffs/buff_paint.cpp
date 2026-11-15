@@ -41,25 +41,46 @@ const TextMasks& Text(const std::wstring& s)
 }
 
 // Text centred on cx with its capitals' middle at cy.
-void DrawCentred(Canvas& c, const std::wstring& s, float cx, float cy, uint32_t rgb)
+void DrawCentred(Canvas& c, const std::wstring& s, float cx, float cy, uint32_t rgb, float alpha = 1.0f)
 {
     if (s.empty())
         return;
     const TextMasks& t = Text(s);
     const float top = cy - g_font.Ascent() * (1.0f - 0.36f);
     const int x0 = static_cast<int>(std::lround(cx - t.width * 0.5f)) - kTextPad, y0 = static_cast<int>(std::lround(top)) - kTextPad;
-    c.Mask(x0, y0, t.outline, 0x000000, 0.95f);
-    c.Mask(x0, y0, t.fill, rgb, 1.0f);
+    if (alpha >= 1.0f) {
+        c.Mask(x0, y0, t.outline, 0x000000, 0.95f);
+        c.Mask(x0, y0, t.fill, rgb, 1.0f);
+        return;
+    }
+    // Faded: painted apart and laid on at alpha, so the outline doesn't show through the letters.
+    Canvas text;
+    text.Reset(t.fill.w, t.fill.h);
+    text.Mask(0, 0, t.outline, 0x000000, 0.95f);
+    text.Mask(0, 0, t.fill, rgb, 1.0f);
+    for (float& v : text.px)
+        v *= alpha;
+    c.Paste(text, x0, y0);
 }
 
 // The border round an icon at (x, y): a thin ring in the nano kind's colour, a dark edge outside it.
-void Border(Canvas& c, const Metrics& m, int x, int y, uint32_t rgb)
+void Border(Canvas& c, const Metrics& m, int x, int y, uint32_t rgb, float alpha)
 {
     const float b = static_cast<float>(m.border), sw = static_cast<float>(m.iconW), sh = static_cast<float>(m.iconH);
     const float x0 = x - b, y0 = y - b, x1 = x + sw + b, y1 = y + sh + b;
-    c.RoundRect(x0 - 1.0f, y0 - 1.0f, x1 + 1.0f, y1 + 1.0f, 0.0f, 0x050607, 0x050607, 1.0f);
-    c.RoundRect(x0, y0, x1, y1, 0.0f, rgb, rgb, 1.0f);
-    c.RoundRect(static_cast<float>(x), static_cast<float>(y), x + sw, y + sh, 0.0f, 0x020304, 0x020304, 1.0f);
+    if (alpha >= 1.0f) {
+        c.RoundRect(x0 - 1.0f, y0 - 1.0f, x1 + 1.0f, y1 + 1.0f, 0.0f, 0x050607, 0x050607, 1.0f);
+        c.RoundRect(x0, y0, x1, y1, 0.0f, rgb, rgb, 1.0f);
+        c.RoundRect(static_cast<float>(x), static_cast<float>(y), x + sw, y + sh, 0.0f, 0x020304, 0x020304, 1.0f);
+        return;
+    }
+    // Faded: painted apart and laid on at alpha, so the layers don't show through each other.
+    Canvas cell;
+    cell.Reset(static_cast<int>(sw + 2 * b) + 2, static_cast<int>(sh + 2 * b) + 2);
+    Border(cell, m, static_cast<int>(b) + 1, static_cast<int>(b) + 1, rgb, 1.0f);
+    for (float& v : cell.px)
+        v *= alpha; // premultiplied: every channel
+    c.Paste(cell, static_cast<int>(x0) - 1, static_cast<int>(y0) - 1);
 }
 
 } // namespace
@@ -79,6 +100,13 @@ Metrics MetricsFor(int iconW, int iconH)
     return m;
 }
 
+RECT CellRect(const Metrics& m, POINT at)
+{
+    // The border's dark edge is a pixel outside it; the time's outline can reach a little past the cell's width.
+    const int out = m.border + 2;
+    return RECT{at.x - out - m.gap / 2, at.y - out, at.x + m.iconW + out + m.gap / 2, at.y + m.iconH + m.border + m.timeH + 2};
+}
+
 void MinSize(const Metrics& m, int* w, int* h)
 {
     *w = 2 * m.pad + m.CellW() - m.gap;
@@ -93,6 +121,12 @@ Layout Arrange(const Metrics& m, int w, int h, int buffs, int debuffs, bool righ
     l.w = std::max(w, minW);
     l.h = std::max(h, minH);
     const int cols = std::max(1, (l.w - 2 * m.pad + m.gap) / m.CellW());
+    // Taller if the rows need it (up to kMaxHeight): every nano shows, debuffs too.
+    const int rows = (buffs + cols - 1) / cols + (debuffs + cols - 1) / cols;
+    if (rows > 0) {
+        const int need = 2 * m.pad + rows * m.CellH() - m.gap + (buffs > 0 && debuffs > 0 ? m.rowGap : 0);
+        l.h = std::max(l.h, std::min(need, kMaxHeight));
+    }
     int y = m.pad;
     auto place = [&](int n, std::vector<POINT>& at) {
         for (int i = 0; i < n; ++i) {
@@ -146,15 +180,20 @@ void Paint(Canvas& c, const Metrics& m, const Layout& l, const std::vector<Buff>
         }
     }
     auto icons = [&](const std::vector<Buff>& list, const std::vector<POINT>& at) {
-        for (size_t i = 0; i < at.size() && i < list.size(); ++i) {
-            const Buff& b = list[i];
-            Border(c, m, at[i].x, at[i].y, b.rgb);
-            const uint32_t rgb = b.expiring ? 0xFFD24A : 0xF2F4F6;
-            DrawCentred(c, b.time, at[i].x + m.iconW * 0.5f, at[i].y + m.iconH + m.border + m.timeH * 0.5f + 1.0f, rgb);
-        }
+        for (size_t i = 0; i < at.size() && i < list.size(); ++i)
+            PaintCell(c, m, at[i], list[i]);
     };
     icons(buffs, l.buffAt);
     icons(debuffs, l.debuffAt);
+}
+
+void PaintCell(Canvas& c, const Metrics& m, POINT at, const Buff& b)
+{
+    if (b.alpha <= 0.0f)
+        return;
+    Border(c, m, at.x, at.y, b.rgb, b.alpha);
+    const uint32_t rgb = b.expiring ? 0xFFD24A : 0xF2F4F6;
+    DrawCentred(c, b.time, at.x + m.iconW * 0.5f, at.y + m.iconH + m.border + m.timeH * 0.5f + 1.0f, rgb, b.alpha);
 }
 
 std::wstring TimeLeft(int cs)

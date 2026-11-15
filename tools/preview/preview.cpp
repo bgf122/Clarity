@@ -262,18 +262,23 @@ void Scene(const std::wstring& path, float cellScale, bool hideEmpty)
 }
 
 // The buff frame: 9 buffs and 3 debuffs over the game world, its area 8 icons wide and 3 rows high
-// (unlocked: its panel and grip show).
-void BuffScene(const std::wstring& path, bool unlocked, bool rightToLeft = false)
+// (unlocked: its panel and grip show), each sorted as in game: no end first, then the longest time left,
+// the next to end last. blink: the expiring ones (under 10 s) at that point of the blink's fade (1 = full).
+// rows: the frame's set height in rows (fewer than the nanos need: it grows to fit them).
+void BuffScene(const std::wstring& path, bool unlocked, bool rightToLeft = false, float blink = 1.0f, int rows = 3)
 {
     const bp::Metrics m = bp::MetricsFor(40, 24); // the game's nano icons
     bp::EnsureFonts(1.0f);
     // The border colours: the fallbacks for the game's kinds (in game, read from its NCU overlays).
     constexpr uint32_t kSelf = 0xE0B83A, kTeam = 0x58C85A, kFriendly = 0xC8CDD2, kHostile = 0xD8402F;
-    std::vector<bp::Buff> buffs = {{false, kSelf, L"2h"},       {false, kTeam, L"58m"}, {false, kSelf, L"45m"},
-                                   {false, kFriendly, L"12m"},  {false, kSelf, L"9m"},  {false, kTeam, L"3m"},
-                                   {false, kFriendly, L"58s"},  {false, kSelf, L"7s", true}, {false, kSelf, L""}};
+    std::vector<bp::Buff> buffs = {{false, kSelf, L""},     {false, kSelf, L"2h"},       {false, kTeam, L"58m"},
+                                   {false, kSelf, L"45m"},  {false, kFriendly, L"12m"},  {false, kSelf, L"9m"},
+                                   {false, kTeam, L"3m"},   {false, kFriendly, L"58s"},  {false, kSelf, L"7s", true}};
     std::vector<bp::Buff> debuffs = {{true, kHostile, L"25s"}, {true, kHostile, L"12s"}, {true, kHostile, L"4s", true}};
-    const int w = 2 * m.pad + 8 * m.CellW() - m.gap, h = 2 * m.pad + 3 * m.CellH() - m.gap + m.rowGap;
+    for (auto* list : {&buffs, &debuffs})
+        for (bp::Buff& b : *list)
+            b.alpha = b.expiring ? blink : 1.0f;
+    const int w = 2 * m.pad + 8 * m.CellW() - m.gap, h = 2 * m.pad + rows * m.CellH() - m.gap + m.rowGap;
     const bp::Layout l = bp::Arrange(m, w, h, static_cast<int>(buffs.size()), static_cast<int>(debuffs.size()), rightToLeft);
     Canvas c;
     const int pad = 40;
@@ -283,10 +288,19 @@ void BuffScene(const std::wstring& path, bool unlocked, bool rightToLeft = false
     f.Reset(l.w, l.h);
     bp::Paint(f, m, l, buffs, debuffs, unlocked);
     c.Paste(f, pad, pad);
+    // An icon, faded as the game's SetAlpha fades it in the blink.
+    auto icon = [&](const bp::Buff& b, POINT at, uint32_t rgb) {
+        Canvas ic;
+        ic.Reset(m.iconW, m.iconH);
+        FakeIcon(ic, 0, 0, m.iconW, rgb, m.iconH, false);
+        for (float& v : ic.px)
+            v *= b.alpha;
+        c.Paste(ic, pad + at.x, pad + at.y);
+    };
     for (size_t i = 0; i < l.buffAt.size(); ++i)
-        FakeIcon(c, pad + l.buffAt[i].x, pad + l.buffAt[i].y, m.iconW, kIconRgb[(i * 3) % 10], m.iconH, false);
+        icon(buffs[i], l.buffAt[i], kIconRgb[(i * 3) % 10]);
     for (size_t i = 0; i < l.debuffAt.size(); ++i)
-        FakeIcon(c, pad + l.debuffAt[i].x, pad + l.debuffAt[i].y, m.iconW, kIconRgb[(i * 7 + 1) % 10], m.iconH, false);
+        icon(debuffs[i], l.debuffAt[i], kIconRgb[(i * 7 + 1) % 10]);
     if (!SavePng(c, path))
         fwprintf(stderr, L"couldn't write %ls\n", path.c_str());
     else
@@ -312,6 +326,9 @@ int wmain(int argc, wchar_t** argv)
     BuffScene(dir + L"\\buffs.png", false);
     BuffScene(dir + L"\\buffs_unlocked.png", true);
     BuffScene(dir + L"\\buffs_right_to_left.png", false, true);
+    BuffScene(dir + L"\\buffs_blink_half.png", false, false, 0.65f);
+    BuffScene(dir + L"\\buffs_blink_low.png", false, false, bp::kBlinkAlpha);
+    BuffScene(dir + L"\\buffs_grown.png", true, false, 1.0f, 1);
     CoUninitialize();
     return 0;
 }

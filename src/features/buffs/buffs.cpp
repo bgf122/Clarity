@@ -1,7 +1,8 @@
 // The buff frame: your running nanos (the game's NCU list) as the game's own icons in a Clarity window,
 // buffs then debuffs (hostile nanos), each bordered in its kind's colour, with the time left under it and the
 // NCU window's hover text. Right-click a buff to cancel it; shift-click a nano for its description. Unlocked, drag it to move it and its bottom-right corner to
-// resize it; the icons flow in the area, from the top left or (RightToLeft) the top right.
+// resize it; the icons flow in the area, from the top left or (RightToLeft) the top right, the longest time
+// left first and the next to end last. Under 10 seconds left an icon blinks.
 //
 // The game's side (GUI, worked out from the NCU window, NCUView_c 0x100D6DD6 / NCUListView_c):
 //   - N3Msg_GetNanoTemplateInfoList(): your nanos, a VS2010 std::list of NanoTemplateInfo_c (its Identity, the
@@ -215,6 +216,9 @@ struct Cell {
     void* dimmed = nullptr;  // a nano's dimmed (right) half, over the time gone, as the NCU window
     gui::Rect source{};      // the whole texture (both halves)
     int fill = -1;           // pixels of the icon in the normal half (what's drawn now)
+    float alpha = -1.0f;     // the icon's fade (the under-10-seconds blink), as set now; -1 = to be set
+    bool expiring = false;   // under 10 seconds left: it blinks
+    int fullW = 0;           // the icon's width, pixels (fill < fullW: the dimmed half shows)
     int icon = 0;
     bool rdbIcon = false;
     bool shown = false;
@@ -224,6 +228,25 @@ struct Cell {
 };
 
 constexpr int kMaxCells = 64;
+constexpr DWORD kBlinkPeriodMs = 2000; // full -> faded -> full (the NCU window: hidden / shown every 500 ms)
+constexpr UINT kBlinkTickMs = 40;      // the fade's steps, only while something blinks
+
+// Under 10 seconds left a nano blinks, as in the NCU window: its list flashes the item (0x10044A9D:
+// MultiListView_c::FlashItem(item, forever) below 1000), hiding and showing it every 500 ms
+// (SlotItemFlashTimer). Here, rather than hidden, the cell (its icon, border, background and time) fades
+// smoothly down to bp::kBlinkAlpha and back, all such cells together.
+bool Expiring(const Nano& n)
+{
+    return n.left > 0 && n.left < 1000;
+}
+
+float BlinkAlpha(DWORD now)
+{
+    const float phase = static_cast<float>(now % kBlinkPeriodMs) / kBlinkPeriodMs;
+    const float up = 0.5f + 0.5f * std::cos(phase * 6.2831853f); // 1 -> 0 -> 1
+    const float a = bp::kBlinkAlpha + (1.0f - bp::kBlinkAlpha) * up;
+    return std::round(a * 64.0f) / 64.0f; // steps: no repaint when it hasn't changed
+}
 gui::Surface g_frame{"buff frame", 2048, 1024, gui::kNormalFlags};
 Cell g_cells[kMaxCells];
 void* g_cellsWindow = nullptr; // the window the cells' views are in (a new window: new views)
@@ -238,6 +261,56 @@ bp::Metrics g_metrics;
 int g_iconW = 0, g_iconH = 0;  // the game's icon size (pixels), measured on the first icon loaded; 0 = not yet
 bp::Layout g_layout;
 std::vector<Nano> g_placed;    // per cell, the nano in it
+int g_used = 0;                // cells in use
+
+// The blink: the frame painted without the expiring cells (g_base), and as sent (g_composed: the base
+// with them over it at the fade); each step paints only their area again and sends that.
+struct Blinking {
+    POINT at;
+    bp::Buff buff;
+};
+std::vector<Blinking> g_blinking;
+RECT g_blinkArea{};
+Canvas g_base, g_composed;
+float g_blinkDrawn = -1.0f;    // the fade they were last painted at
+bool g_blinkTimer = false;
+constexpr UINT_PTR kBlinkTimerId = 0xC1AD;
+
+// The fade onto a cell's icon (both halves; an empty half stays clear).
+void SetCellAlpha(Cell& cell, float a)
+{
+    if (!cell.image || a == cell.alpha)
+        return;
+    cell.alpha = a;
+    gui::SetImageAlpha(cell.image, cell.fill > 0 ? a : 0.0f);
+    if (cell.dimmed)
+        gui::SetImageAlpha(cell.dimmed, cell.fill < cell.fullW ? a : 0.0f);
+}
+
+// The expiring cells painted at the fade and sent (all of the frame if `whole`).
+void PaintBlink(float a, bool whole)
+{
+    if (!whole && (g_blinking.empty() || a == g_blinkDrawn))
+        return;
+    g_blinkDrawn = a;
+    const int w = g_composed.w, h = g_composed.h;
+    const RECT r{std::max(0L, g_blinkArea.left), std::max(0L, g_blinkArea.top), std::min<LONG>(w, g_blinkArea.right),
+                 std::min<LONG>(h, g_blinkArea.bottom)};
+    if (!g_blinking.empty() && r.right > r.left && r.bottom > r.top && g_base.w == w && g_base.h == h) {
+        for (LONG y = r.top; y < r.bottom; ++y) {
+            const size_t from = (static_cast<size_t>(y) * w + r.left) * 4;
+            std::memcpy(&g_composed.px[from], &g_base.px[from], static_cast<size_t>(r.right - r.left) * 4 * sizeof(float));
+        }
+        for (Blinking& b : g_blinking) {
+            b.buff.alpha = a;
+            bp::PaintCell(g_composed, g_metrics, b.at, b.buff);
+        }
+    }
+    if (whole)
+        gui::Upload(g_frame, g_composed);
+    else if (r.right > r.left && r.bottom > r.top)
+        gui::Upload(g_frame, g_composed, &r);
+}
 
 // The game's own NCU window: what its opener was last asked, and with what, to put it back.
 void* g_ncuSelf = nullptr;
@@ -353,6 +426,10 @@ void Update(HWND hwnd)
         GameNcu(g_ncuWanted);
     if (!cfg.enable || g_disabled || !g_shown || !gui::InGame()) {
         gui::Show(g_frame, false);
+        if (g_blinkTimer) {
+            KillTimer(hwnd, kBlinkTimerId);
+            g_blinkTimer = false;
+        }
         return;
     }
 
@@ -372,18 +449,17 @@ void Update(HWND hwnd)
     std::vector<Nano> buffs, debuffs;
     for (const Nano& n : nanos)
         (n.hostile ? debuffs : buffs).push_back(n);
-    // By time left, the shortest first, as the NCU window sorts them (its time-left column, 0x100D6DD6);
-    // nanos with no end last.
+    // By time left, the longest first, so the next to end is the last; nanos with no end first.
     auto byTimeLeft = [](const Nano& a, const Nano& b) {
         const long long ta = a.left > 0 ? a.left : LLONG_MAX, tb = b.left > 0 ? b.left : LLONG_MAX;
-        return ta < tb;
+        return ta > tb;
     };
     std::stable_sort(buffs.begin(), buffs.end(), byTimeLeft);
     std::stable_sort(debuffs.begin(), debuffs.end(), byTimeLeft);
     g_layout = bp::Arrange(g_metrics, g_w, g_h, static_cast<int>(buffs.size()), static_cast<int>(debuffs.size()), cfg.rightToLeft);
+    // g_h is the least height (as set); the frame is as tall as its rows need (Arrange), so no nano is left out.
     g_w = g_layout.w;
-    g_h = g_layout.h;
-    if (!gui::Ensure(g_frame, g_w, g_h, k)) {
+    if (!gui::Ensure(g_frame, g_layout.w, g_layout.h, k)) {
         g_disabled = true;
         return;
     }
@@ -397,12 +473,14 @@ void Update(HWND hwnd)
     gui::SetOpacity(g_frame, cfg.opacity);
 
     // The painted part: borders, times, (unlocked) the panel.
+    const float blinkAlpha = BlinkAlpha(GetTickCount());
     auto toPaint = [](const Nano& n) {
         bp::Buff b;
         b.hostile = n.hostile;
         b.rgb = KindRgb(n.kind);
         b.time = bp::TimeLeft(n.left);
-        b.expiring = n.left > 0 && n.left < 1000;
+        b.expiring = Expiring(n);
+        b.alpha = b.expiring ? 0.0f : 1.0f; // the expiring ones aren't in the base: the blink paints them
         return b;
     };
     std::vector<bp::Buff> pb, pd;
@@ -412,7 +490,7 @@ void Update(HWND hwnd)
         pd.push_back(toPaint(n));
     std::string state;
     char head[64];
-    sprintf_s(head, "%d|%d|%dx%d|%c|", g_w, g_h, g_metrics.iconW, g_metrics.iconH, cfg.locked ? 'L' : 'U');
+    sprintf_s(head, "%d|%d|%dx%d|%c|", g_layout.w, g_layout.h, g_metrics.iconW, g_metrics.iconH, cfg.locked ? 'L' : 'U');
     state = head;
     for (const auto* at : {&g_layout.buffAt, &g_layout.debuffAt}) // where the borders go (the direction moves them)
         for (const POINT& p : *at) {
@@ -429,15 +507,35 @@ void Update(HWND hwnd)
                 state += static_cast<char>(ch);
             state += '|';
         }
+    // The blinking cells, apart (they and their times are in `state`, so they change only with it).
     if (state != g_frame.drawn) {
         perf::Slow slow("buffs: paint", 0, 2.0);
-        Canvas c;
-        c.Reset(g_frame.w, g_frame.h);
-        bp::Paint(c, g_metrics, g_layout, pb, pd, !cfg.locked);
-        gui::Upload(g_frame, c);
+        g_blinking.clear();
+        g_blinkArea = {LONG_MAX, LONG_MAX, LONG_MIN, LONG_MIN};
+        for (int side = 0; side < 2; ++side) {
+            const std::vector<bp::Buff>& list = side == 0 ? pb : pd;
+            const std::vector<POINT>& at = side == 0 ? g_layout.buffAt : g_layout.debuffAt;
+            for (size_t i = 0; i < list.size() && i < at.size(); ++i) {
+                if (!list[i].expiring)
+                    continue;
+                g_blinking.push_back({at[i], list[i]});
+                const RECT r = bp::CellRect(g_metrics, at[i]);
+                g_blinkArea = {std::min(g_blinkArea.left, r.left), std::min(g_blinkArea.top, r.top), std::max(g_blinkArea.right, r.right),
+                               std::max(g_blinkArea.bottom, r.bottom)};
+            }
+        }
+        g_base.Reset(g_frame.w, g_frame.h);
+        bp::Paint(g_base, g_metrics, g_layout, pb, pd, !cfg.locked);
+        g_composed = g_base;
+        PaintBlink(blinkAlpha, true);
         g_frame.drawn = state;
+    } else {
+        PaintBlink(blinkAlpha, false);
     }
     gui::Show(g_frame, true);
+    // The fade's own timer, quicker than the update's, while something blinks.
+    if (!g_blinking.empty() != g_blinkTimer)
+        g_blinkTimer = g_blinking.empty() ? (KillTimer(hwnd, kBlinkTimerId), false) : SetTimer(hwnd, kBlinkTimerId, kBlinkTickMs, nullptr) != 0;
 
     // The icons: the game's own, one child view per cell.
     perf::Slow slowIcons("buffs: icons", 0, 2.0);
@@ -497,6 +595,8 @@ void Update(HWND hwnd)
             }
             // The time left as the NCU window shows it (ItemIconView_c GUI 0x1003EFE6): the normal half from the
             // left over the time left, the dimmed half over the rest. A nano with no end stays whole.
+            cell.expiring = Expiring(n);
+            cell.fullW = static_cast<int>(s);
             if (cell.image) {
                 const gui::Rect& src = cell.source;
                 const float tw = src.right - src.left + 1.0f;
@@ -505,24 +605,16 @@ void Update(HWND hwnd)
                 const int fill = cell.dimmed ? static_cast<int>(std::floor(s * f)) : static_cast<int>(s);
                 if (fill != cell.fill) {
                     cell.fill = fill;
+                    cell.alpha = -1.0f; // the alphas below are set again
                     const float fw = static_cast<float>(fill), cut = half * fw / s; // the cut, in the texture
-                    if (fill > 0) {
+                    if (fill > 0)
                         gui::SetImageFrames(cell.image, gui::Rect{src.left, src.top, src.left + cut - 1.0f, src.bottom},
                                             gui::Rect{0.0f, 0.0f, fw - 1.0f, sh - 1.0f});
-                        gui::SetImageAlpha(cell.image, 1.0f);
-                    } else {
-                        gui::SetImageAlpha(cell.image, 0.0f);
-                    }
-                    if (cell.dimmed) {
-                        if (fill < static_cast<int>(s)) {
-                            gui::SetImageFrames(cell.dimmed, gui::Rect{src.left + half + cut, src.top, src.left + 2.0f * half - 1.0f, src.bottom},
-                                                gui::Rect{fw, 0.0f, s - 1.0f, sh - 1.0f});
-                            gui::SetImageAlpha(cell.dimmed, 1.0f);
-                        } else {
-                            gui::SetImageAlpha(cell.dimmed, 0.0f);
-                        }
-                    }
+                    if (cell.dimmed && fill < static_cast<int>(s))
+                        gui::SetImageFrames(cell.dimmed, gui::Rect{src.left + half + cut, src.top, src.left + 2.0f * half - 1.0f, src.bottom},
+                                            gui::Rect{fw, 0.0f, s - 1.0f, sh - 1.0f});
                 }
+                SetCellAlpha(cell, cell.expiring ? blinkAlpha : 1.0f);
             }
             const bool over = mx >= at[i].x - g_metrics.border && my >= at[i].y - g_metrics.border &&
                               mx < at[i].x + g_metrics.iconW + g_metrics.border && my < at[i].y + g_metrics.iconH + g_metrics.border;
@@ -548,6 +640,7 @@ void Update(HWND hwnd)
     place(buffs, g_layout.buffAt);
     place(debuffs, g_layout.debuffAt);
     HideCells(used);
+    g_used = used;
     gui::KeepSize(g_frame); // the new cells' views made the GUI refit (shrink) the window
     // The refit also stretches the cells' views (to the frame's size plus their own: 389 x 202 for a 40 x 24
     // icon). A view's bounds are where the GUI looks for its tooltip (GUI 0x10156D66: the first child whose
@@ -581,9 +674,22 @@ void Update(HWND hwnd)
         lastLog = now;
         const gui::Rect f = gui::WindowFrame(g_frame.window);
         Log("[buffs] %d nanos (%d buffs, %d debuffs), %d shown; frame at (%.0f, %.0f) %dx%d px; window %s, (%.0f, %.0f)-(%.0f, %.0f), screen %.0fx%.0f",
-            static_cast<int>(nanos.size()), static_cast<int>(buffs.size()), static_cast<int>(debuffs.size()), used, g_x, g_y, g_w, g_h,
+            static_cast<int>(nanos.size()), static_cast<int>(buffs.size()), static_cast<int>(debuffs.size()), used, g_x, g_y, g_layout.w, g_layout.h,
             gui::WindowVisible(g_frame.window) ? "visible" : "HIDDEN", f.left, f.top, f.right, f.bottom, screen.x, screen.y);
     }
+}
+
+// A step of the blink's fade (its own timer, between updates): the expiring cells' painting and icons.
+void BlinkStep()
+{
+    if (!g_blinkTimer || g_blinking.empty() || !g_frame.window || !gui::WindowVisible(g_frame.window))
+        return;
+    perf::Slow slow("buffs: blink", 0, 2.0);
+    const float a = BlinkAlpha(GetTickCount());
+    PaintBlink(a, false);
+    for (int i = 0; i < g_used && i < kMaxCells; ++i)
+        if (g_cells[i].expiring)
+            SetCellAlpha(g_cells[i], a);
 }
 
 // --- the game window: timer, dragging, resizing, cancelling -------------------------------------
@@ -642,6 +748,11 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
     const BuffsConfig& cfg = Cfg().buffs;
     switch (msg) {
     case WM_TIMER:
+        if (wp == kBlinkTimerId) {
+            BlinkStep();
+            *result = 0;
+            return true;
+        }
         if (wp != kTimerId)
             return false;
         Update(hwnd);
@@ -669,7 +780,7 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
         const bool grip = px >= g_frame.w - g_metrics.grip - 2 && py >= g_frame.h - g_metrics.grip - 2;
         g_drag = grip ? Drag::Resize : Drag::Move;
         g_dragMouse = {static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};
-        g_dragX = g_x, g_dragY = g_y, g_dragW = g_w, g_dragH = g_h;
+        g_dragX = g_x, g_dragY = g_y, g_dragW = g_w, g_dragH = g_layout.h; // from where the grip is (grown or not)
         SetCapture(hwnd);
         *result = 0;
         return true;
@@ -688,7 +799,7 @@ bool OnMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* result)
             int minW, minH;
             bp::MinSize(g_metrics, &minW, &minH);
             g_w = std::clamp(g_dragW + dx, minW, 2000);
-            g_h = std::clamp(g_dragH + dy, minH, 1000);
+            g_h = std::clamp(g_dragH + dy, minH, bp::kMaxHeight);
             Update(hwnd); // the icons flow into the new size at once
         }
         *result = 0;

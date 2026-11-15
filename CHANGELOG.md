@@ -2,6 +2,13 @@
 
 Each release's section here becomes its notes on GitHub and in AoForge.
 
+## 0.1.22
+
+### Buff Frame
+- **The next nano to end is now last.** Nanos are sorted with the longest time left first, so the one about to run out sits at the end of its row. Nanos with no end come first.
+- **Ending nanos pulse.** With under 10 seconds left, a nano slowly fades down and back up, like the blink in the game's NCU window, but gentler.
+- **No nano is left out any more.** When your buffs filled the frame, debuffs below them could go missing; the frame now grows down to fit every row.
+
 ## 0.1.21
 
 ### Fixes

@@ -54,7 +54,8 @@ Clarity is a UI mod for the Anarchy Online client. It's one DLL (`dinput.dll`) t
   - Settings: Enabled, Locked, Bars in the frame, Hide Empty Slots, Show Keys and Show XP Bars.
 
 - **Buff frame** (off by default: Options > Clarity > Buffs): your running nanos as icons in place of the game's NCU window.
-  - Buffs first, then debuffs on a new row, each sorted by time left. The time left is under each icon, and the icon empties as the game's NCU window shows it.
+  - Buffs first, then debuffs on a new row, each sorted by time left with the next to end last. The time left is under each icon, and the icon empties as the game's NCU window shows it. Under 10 seconds left a nano pulses.
+  - The frame grows down when it needs more rows, so no nano is left out.
   - Each icon's border has the colour the game gives its kind: self, team, friendly or hostile.
   - Hover for the same text as the NCU window, counting down. Right-click a buff to cancel it, shift-click to open its description.
   - Unlocked, drag it to move it and drag its corner to resize it. The game's NCU button shows and hides it.

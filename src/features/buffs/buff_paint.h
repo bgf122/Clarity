@@ -16,7 +16,11 @@ struct Buff {
     uint32_t rgb = 0xC8CDD2; // the border: the nano kind's colour
     std::wstring time;      // "45m", "30s", "" = no end
     bool expiring = false;  // under 10 seconds left
+    float alpha = 1.0f;     // its fade (the blink, under 10 seconds left); 0 = not painted
 };
+
+// The least of an expiring cell (its icon, border, background and time) the blink shows.
+constexpr float kBlinkAlpha = 0.3f;
 
 struct Metrics {
     int iconW = 40;  // an icon's size: the game's nano icons are 40 x 24
@@ -33,8 +37,13 @@ struct Metrics {
 
 Metrics MetricsFor(int iconW, int iconH);
 
+// The area a cell's painting covers round the icon at (x, y): its border and the time under it.
+RECT CellRect(const Metrics& m, POINT at);
+
 // Where each icon goes (its top-left, inside its border) in a w x h frame: the buffs in rows from the top
-// left (rightToLeft: from the top right, as WoW's), then the debuffs from a new row. Only what fits is placed.
+// left (rightToLeft: from the top right, as WoW's), then the debuffs from a new row. h is the least height:
+// the frame grows down to fit every row, up to kMaxHeight (past that, only what fits is placed).
+constexpr int kMaxHeight = 1000;
 struct Layout {
     int w = 0, h = 0;
     std::vector<POINT> buffAt, debuffAt;
@@ -49,6 +58,9 @@ bool EnsureFonts(float scale);
 // The frame: (unlocked) its panel and grip, then each placed icon's border and time.
 void Paint(gfx::Canvas& c, const Metrics& m, const Layout& l, const std::vector<Buff>& buffs, const std::vector<Buff>& debuffs,
            bool unlocked);
+
+// One cell's border and time, the icon at `at`, at its alpha (Paint does each cell so).
+void PaintCell(gfx::Canvas& c, const Metrics& m, POINT at, const Buff& b);
 
 // "2h", "45m", "30s" (WoW's short form); "" for a nano with no end.
 std::wstring TimeLeft(int centiseconds);
